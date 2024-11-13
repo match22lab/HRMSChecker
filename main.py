@@ -1,1235 +1,1424 @@
-import molmass
-from molmass import Formula
 import os
 import re
-import fitz
 import time
-from fpdf import FPDF
+import logging
+from typing import List
+from molmass import Formula
+import pandas as pd # also install openpyxl
+import fitz  # install PyMuPDF
 
-# Source folder
-folder_path = r"C:\Users\match\Downloads"  # Specify path of folder to be scanned
-# Destination folder #filename for report
-output_file = r"C:\Users\match\Desktop\Report.pdf"  # Specify name and path of output file
-
-start_time = time.time() # Start counter to later determine the program's running time
-
-# Define some colors for the console output
-CCYAN = '\033[96m'
-CGREEN = '\33[32m'
-CVIOLET = '\33[35m'
-CEND = '\033[0m'
-def calculate_molecular_weight(formula):
-
-    atomic_weights = {
-        "H": 1.008, "D": 2.0141, "He": 4.002602, "Li": 6.94, "Be": 9.0121831, "B": 10.81, "C": 12.011,
-        "N": 14.007, "O": 15.999, "F": 18.9984, "Ne": 20.1797, "Na": 22.98977,
-        "Mg": 24.305, "Al": 26.98154, "Si": 28.085, "P": 30.97376, "S": 32.06,
-        "Cl": 35.45, "Ar": 39.948, "K": 39.0983, "Ca": 40.078, "Sc": 44.955908, "Ti": 47.867,
-        "V": 50.9415, "Cr": 51.9961, "Mn": 54.938044, "Fe": 55.845, "Co": 58.933194,
-        "Ni": 58.6934, "Cu": 63.546, "Zn": 65.38, "Ga": 69.723, "Ge": 72.630, "As": 74.921595,
-        "Se": 78.971, "Br": 79.904, "Kr": 83.798, "Rb": 85.4678, "Sr": 87.62, "Y": 88.90584,
-        "Zr": 91.224, "Nb": 92.90637, "Mo": 95.95, "Tc": 98, "Ru": 101.07, "Rh": 102.90550,
-        "Pd": 106.42, "Ag": 107.8682, "Cd": 112.414, "In": 114.818, "Sn": 118.710, "Sb": 121.760,
-        "Te": 127.60, "I": 126.90447, "Xe": 131.293, "Cs": 132.90545196, "Ba": 137.327,
-        "Au": 196.96657 # Added Gold
-        # ... (add the rest of the elements)
-    }
-
-    # Extract elements and their counts using regular expressions
-    elements = re.findall(r"([A-Z][a-z]?)(\d*)", formula)
-
-    mol_weight = 0.0
-    for element, count in elements:
-        element_weight = atomic_weights.get(element, 0.0)
-        mol_weight += element_weight * (int(count) if count else 1)
-    return mol_weight
-
-class PDF(FPDF):
-    def header(self):
-        # Set font for the header
-        self.set_font('Arial', 'B', 12)
-        # Title
-        pdf.set_text_color(0, 0, 0)  # Black
-        self.cell(0, 10, 'HRMS Report', 0, 1, 'C')
-
-def normalize_word(word, string):
-    pattern = re.compile(r'(?i)' + re.escape(word))
-    return pattern.sub(word.lower(), string)
+# Constants for file paths and reporting
+source_folder = r"C:\Users\match\Downloads"  # The folder to be searched for PDFs with HRMS data
+destination_folder = r"C:\Users\match\Desktop" # The folder for the report is saved if write_report = True
+write_report = False # If True, a report is written as Excel file to destination_folder; if False, no report is written
 
 
-def is_molecular_formula(s):
-    # Remove parentheses and square brackets from the string
-    s = re.sub(r'[\(\)\[\]]', '', s)
-    # Define a regular expression pattern for a valid molecular formula
-    # The pattern ensures that if a digit follows an element, it must not start with '0'
-    pattern = re.compile(
-        r'^((Ac|Ag|Al|Am|Ar|As|At|Au|B|Ba|Be|Bh|Bi|Bk|Br|C|Ca|Cd|Ce|Cf|Cl|Cm|Co|Cr|Cs|Cu|Ds|D|Db|Dy|Er|Es|Eu|F|Fe|Fm|Fr|Ga|Gd|Ge|H|He|Hf|Hg|Ho|Hs|I|In|Ir|K|Kr|La|Li|Lr|Lu|Md|Mg|Mn|Mo|Mt|N|Na|Nb|Nd|Ne|Ni|No|Np|O|Os|P|Pa|Pb|Pd|Pm|Po|Pr|Pt|Pu|Ra|Rb|Re|Rf|Rg|Rh|Rn|Ru|S|Sb|Sc|Se|Sg|Si|Sm|Sn|Sr|Ta|Tb|Tc|Te|Th|Ti|Tl|Tm|U|V|W|Xe|Y|Yb|Zn|Zr)([1-9]\d*)?)*$'
-    )
-
-    # Search the string for a match against the pattern
-    return bool(pattern.fullmatch(s))
-
-def is_convertible_to_float(value):
-    return value is not None and isinstance(value, (float, int)) or (isinstance(value, str) and value.replace('.', '', 1).isdigit())
-
-def convert_pattern_hrms(input_string):
-    return re.sub(r"HRMS.{1,10} for (\S+) .{1,10} calcd ", lambda m: f"calculated for {m.group(1)}", input_string)
-
-def extract_float_number(input_string):
-    match = re.search(r'\b\d+\.\d{4}\b', input_string)
-    return match.group() if match else None
-
-def extract_number(input_string):
-    match = re.search(r'\b(\d+(\.\d+)?)\b', input_string)
-    if match:
-        return match.group(1)
-    else:
-        return None
-
-def delete_between_strings(text, start_string, end_string, max_length=42):
-    pattern = re.compile(f'{re.escape(start_string)}(.*?){re.escape(end_string)}', re.DOTALL)
-    matches = pattern.finditer(text)
-    for match in matches:
-        passage = match.group(1)
-        if len(passage) <= max_length:
-            text = text.replace(match.group(0), "")
-
-    return text
-
-def have_swapped_adjacent_digits(float1, float2):
-    # Convert floats to strings, ensuring consistent decimal representation
-    str1, str2 = str(float1), str(float2)
-    # Ensure both strings are of the same length
-    if len(str1) != len(str2):
-        return False
-    # Remove the last two characters for comparison
-    str1 = str1[:-2]
-    str2 = str2[:-2]
-    if len(str1) != len(str2) or len(str1) < 2:
-        return False
-    swapped_digits = False
-    i = 0
-    while i < len(str1) - 1:
-        if str1[i] == str2[i] and str1[i + 1] == str2[i + 1]:
-            i += 1  # Skip identical digits
-        elif str1[i] == str2[i + 1] and str1[i + 1] == str2[i]:
-            if swapped_digits:  # If we already found a swapped pair, return False
+def check_conditions(cleaned_results):
+    for row in cleaned_results:
+        # Check if the 8th column (index 7) is empty or contains "-0.0001" or "+0.0001"
+        if row[7] not in ("", "-0.0001", "+0.0001"):
+            return False
+        # Check if the 7th column (index 6) as a float is less than 10
+        try:
+            if float(row[6]) >= 10:
                 return False
-            swapped_digits = True  # Mark that we found a swapped pair
-            i += 2  # Skip the next digit since we know it's part of the swap
-        elif str1[i] != str2[i]:
-            return False  # If digits don't match and it's not a swap, return False
-        else:
-            i += 1
-    return swapped_digits  # Return True if exactly one swapped pair is found
-
-def differ_in_single_digit_except_last_two(float1, float2):
-    str1, str2 = str(float1), str(float2)
-    # Handle potential decimal points and trailing zeros
-    str1 = str1.rstrip('0').rstrip('.')
-    str2 = str2.rstrip('0').rstrip('.')
-    if len(str1) != len(str2):
-        return False
-    differing_digits = 0
-    for i in range(len(str1) - 2):  # Check up to the second-to-last digit
-        if str1[i] != str2[i]:
-            differing_digits += 1
-            if differing_digits > 1:
-                return False
-    # Check if the last two digits match
-    return differing_digits == 1 and str1[-2:] == str2[-2:]
-
-def add_sentence(pdf, sentence):
-    # Set font and text color
-    pdf.set_font("Arial", size=10)
-    # Set position to the top left and align text to the left
-    pdf.set_xy(10, pdf.get_y())
-    # Write the sentence with colors
-    pdf.cell(0, 5, txt=sentence, ln=True, align='L')
-
-def list_filepaths_in_folder(folder_path):
-    try:
-        # Check if the provided path is a directory
-        if os.path.isdir(folder_path):
-            # Use os.listdir to get a list of filenames in the directory
-            filenames = os.listdir(folder_path)
-            # Create a list of full file paths by joining the folder path and each filename
-            filepaths = [os.path.join(folder_path, filename) for filename in filenames]
-            return filepaths
-        else:
-            return "The provided path is not a valid directory."
-    except Exception as e:
-        return f"An error occurred: {str(e)}"
-
-def extract_text_from_pdf(file_path):
-    # Initialize the PyMuPDF document object
-    if os.path.basename(file_path).lower() == 'desktop.ini':
-        return ""
-    pdf_document = fitz.open(file_path)
-    # Initialize an empty string to store the text content
-    text_content = ""
-    # Iterate through each page of the PDF
-    for page_num in range(pdf_document.page_count):
-        # Get the current page
-        page = pdf_document.load_page(page_num)
-        # Extract text from the page and add it to the content string
-        text_content += page.get_text()
-    return text_content
+        except ValueError:
+            # If conversion to float fails, return False
+            return False
+    return True
 
 
-def exchange_if_float_list(list1, list2):
-    if all(is_float(value) for value in list1):
-        return list2, list1
-    else:
-        return list1, list2
+def fix_floats(text):
+    """
+    Searches a string for floats in the form "xxxx.xxx" and changes them to "xxxx.xxx0".
+
+    Args:
+        text (str): The input text to search and modify.
+
+    Returns:
+        str: The modified text with floats in the form "xxxx.xxx0".
+    """
+    # Define a regular expression pattern to match floats with 3 decimal places
+    pattern = r'\b\d+\.\d{3}\b'
+
+    # Use the re.sub() function to replace matches with the modified float
+    modified_text = re.sub(pattern, lambda match: match.group() + '0', text)
+
+    return modified_text
+
+
+def remove_sublists_with_missing_element1_positions_swapped(cleaned_results):
+    """
+    Removes sublists where element 1 is missing (''), if there exists another sublist
+    where elements at positions 2, 3, and 4 are the same (positions 3 and 4 may be swapped)
+    and element 1 is present.
+    """
+    # Create a set to hold indices of sublists to remove
+    indices_to_remove = set()
+    # Build a dictionary to map keys (elements 2, and positions 3 & 4 as a frozenset) to indices
+    element_presence = {}
+
+    # First pass: Collect sublists where element 1 is present
+    for idx, sublist in enumerate(cleaned_results):
+        if len(sublist) < 4:
+            continue  # Skip if sublist doesn't have enough elements
+        # Create a frozenset of positions 3 and 4 to handle swapping
+        positions_3_4_set = frozenset([sublist[2], sublist[3]])
+        key = (sublist[1], positions_3_4_set)  # Element at position 2 and set of positions 3 and 4
+        if sublist[0] != '':
+            # Element 1 is present, store the index
+            if key not in element_presence:
+                element_presence[key] = []
+            element_presence[key].append(idx)
+
+    # Second pass: Identify sublists to remove
+    for idx, sublist in enumerate(cleaned_results):
+        if len(sublist) < 4:
+            continue  # Skip if sublist doesn't have enough elements
+        if sublist[0] == '':
+            # Element 1 is missing
+            positions_3_4_set = frozenset([sublist[2], sublist[3]])
+            key = (sublist[1], positions_3_4_set)
+            if key in element_presence:
+                # There is at least one sublist where elements 2, 3, 4 (with positions 3 and 4 swapped) are the same and element 1 is present
+                indices_to_remove.add(idx)
+
+    # Remove sublists at the collected indices
+    cleaned_results = [sublist for idx, sublist in enumerate(cleaned_results) if idx not in indices_to_remove]
+    return cleaned_results
+
+
+
+def remove_spaces_in_formula(text):
+    """
+    Removes all spaces within chemical formulas in the input text.
+
+    The function identifies chemical formulas based on sequences of element symbols
+    (one or two letters, starting with an uppercase letter), possibly separated by numbers
+    and spaces, and removes any spaces within those sequences.
+
+    Args:
+      text: The input string containing chemical formulas.
+
+    Returns:
+      The processed string with spaces removed from within chemical formulas.
+    """
+
+    # Step 1: Protect floats by surrounding them with '#'
+    text = re.sub(r'(\d+\.\d+)', r'#\1#', text)
+
+    # Regular expression pattern to match chemical formulas
+    element = r'[A-Z][a-z]?'
+    number = r'\d+'
+    # Pattern matches sequences starting with an element symbol, followed by
+    # elements or numbers, possibly with spaces in between
+    pattern = r'(' + element + r'(?:\s*(?:' + element + r'|' + number + r'))+)'
+
+    # Function to remove spaces within the matched chemical formula
+    def remove_spaces(match):
+        return match.group(0).replace(' ', '')
+
+    # Replace matches in the text with spaces removed within chemical formulas
+    return re.sub(pattern, remove_spaces, text)
+
+
+def remove_page_numbers(text):
+    """
+    Remove lines that appear to be page numbers from a text string.
+
+    Matches:
+    - Single integers (e.g., "12")
+    - Integers with dashes (e.g., "- 12 -", "-13-")
+    - Integers with p/P/s/S prefix (e.g., "P12", "s23")
+    - Integers with p/P/s/S prefix and dashes (e.g., "S-12", "p -13")
+
+    Args:
+        text (str): Input text containing page numbers
+
+    Returns:
+        str: Text with page number lines removed
+    """
+    # Split text into lines
+    lines = text.split('\n')
+
+    # Regular expression patterns for page numbers
+    patterns = [
+        r'^\s*\d+\s*$',                  # Single integers: "12"
+        r'^\s*-\s*\d+\s*-\s*$',          # Dashed integers: "- 12 -"
+        r'^\s*-\d+-\s*$',                # Compact dashed integers: "-13-"
+        r'^\s*[psPS]\s*-?\s*\d+\s*(?:\n|$)',    # p/P/s/S prefixed: "P12", "s23", "S-12"
+    ]
+
+    # Combine patterns
+    combined_pattern = '|'.join(f'({pattern})' for pattern in patterns)
+
+    # Filter out lines matching the patterns
+    cleaned_lines = [line for line in lines if not re.match(combined_pattern, line)]
+
+    # Rejoin the remaining lines
+    return '\n'.join(cleaned_lines)
+
 
 def is_float(value):
-    if value is None:
-        return False
     try:
         float(value)
         return True
-    except (ValueError, TypeError):
+    except ValueError:
         return False
 
-def remove_lines_with_pattern(text):
-    return '\n'.join([line for line in text.split('\n') if not (line.startswith('S') and line[1:].isdigit())])
 
-def extract_text_after_string(text, search_string, num_characters):
-    result = []
-    index = 0
-    while index < len(text):
-        start_index = text.find(search_string, index)
-        if start_index == -1:
-            break
-        start_index += len(search_string)
-        end_index = start_index + num_characters
-        if end_index > len(text):
-            break
-        result.append(text[start_index:end_index])
-        index = end_index
-    return result
 
-def extract_text_before_string(text, search_string, num_characters):
-    result = []
-    index = 0
-    while index < len(text):
-        start_index = text.find(search_string, index)
-        if start_index == -1:
-            break
-        end_index = start_index - num_characters
-        if end_index < 0:
-            end_index = 0
-        result.append(text[end_index:start_index])
-        index = start_index + len(search_string)
-    return result
+def protect_floats(text: str) -> str:
 
-def remove_chars(string, chars_to_remove):
-    for char in chars_to_remove:
-        string = string.replace(char, "")
-    return string
+    # Match floats with 3+ digits before decimal and 4+ after
+    pattern = r'(\d{3,}\.\d{4,})'
 
-def concatenate_formulas(match):
-    formula1, formula2 = match.group().split()
-    return formula1 + formula2
+    def add_spaces(match: re.Match) -> str:
+        """Add spaces around the matched float if needed."""
+        float_num = match.group(1)
+        start, end = match.span(1)
 
-def replace_comma_with_decimal(text):
-    # Define a regular expression pattern to match floating-point numbers with commas
+        # Get characters before and after the float
+        char_before = text[start - 1] if start > 0 else ''
+        char_after = text[end] if end < len(text) else ''
+
+        # Only add space if the adjacent characters aren't already spaces
+        prefix = '' if char_before.isspace() else ' '
+        suffix = '' if char_after.isspace() else ' '
+
+        return f'{prefix}{float_num}{suffix}'
+
+    return re.sub(pattern, add_spaces, text)
+
+
+from typing import Match
+
+
+def replace_comma_with_decimal(text: str) -> str:
+    # Match numbers with comma decimals that:
+    # \b     - Start at a word boundary
+    # \d+    - Have one or more digits before the comma
+    # ,      - Have a comma
+    # \d+    - Have one or more digits after the comma
+    # \b     - End at a word boundary
     pattern = r'\b(\d+,\d+)\b'
-    # Use re.sub() to find and replace commas with decimal points
-    def replace(match):
+
+    def comma_to_decimal(match: Match[str]) -> str:
+        """Convert comma to decimal point in matched number."""
         return match.group(0).replace(',', '.')
-    # Replace all occurrences of floating-point numbers with commas,
-    result = re.sub(pattern, replace, text)
-    return result
+
+    return re.sub(pattern, comma_to_decimal, text)
 
 
 def adjust_space_around_decimal(text):
-    text = re.sub(r'(\d{3,4})\. (\d{4})', r'\1.\2', text)  # Remove space after decimal
-    return re.sub(r'(\d+\.\d+)([A-Za-z])', r'\1 \2', text)  # Add space after decimal
 
-def increase_element_count(molecular_formula, element_to_increase):
-    # Define a regular expression pattern to match the specified element
-    pattern = r'({})(?![a-z])\d*'.format(element_to_increase)
-    def replace_element(match):
+    if not isinstance(text, str):
+        raise TypeError("Input must be a string")
+
+    # Step 1: Remove unwanted spaces around decimal points
+    # Handles cases like "23. 4562" → "23.4562"
+    text = re.sub(r'(\d+)\s*\.\s*(\d+)', r'\1.\2', text)
+
+    # Step 2: Add space between decimal numbers and following text
+    # Handles cases like "2.4beta" → "2.4 beta"
+    text = re.sub(r'(\d+\.\d+)([A-Za-z])', r'\1 \2', text)
+
+    # Step 3: Handle special cases where no space is needed
+    # For file extensions like ".txt", ".pdf"
+    text = re.sub(r'(\s\d+)\s+(\.[A-Za-z]+\b)', r'\1\2', text)
+
+    return text
+
+
+def decrease_element_count(molecular_formula: str, element_to_decrease: str) -> str:
+    """
+    Decreases the count of a specific element in a molecular formula by 1.
+
+    Args:
+        molecular_formula: The input molecular formula (e.g., 'C6H12O2')
+        element_to_decrease: The element whose count should be decreased (e.g., 'C')
+
+    Returns:
+        Modified molecular formula with decreased element count
+
+    Example:
+        >>> decrease_element_count('C6H12O2', 'C')
+        'C5H12O2'
+    """
+    pattern = fr'({element_to_decrease})(?![a-z])\d*'
+
+    def replace_element(match: re.Match) -> str:
         element_count = match.group()
         element = re.match(r'([A-Z][a-z]*)', element_count).group()
-        count = re.search(r'\d+', element_count)
-        if count:
-            new_count = int(count.group()) + 1
-        else:
-            new_count = 2
-        return element + str(new_count)
-        modified_formula = re.sub(pattern, replace_element, molecular_formula)
-        return modified_formula
 
-    # Use the re.sub() function to replace the specified element according to the pattern
-    new_formula = re.sub(pattern, replace_element, molecular_formula)
-    return new_formula
+        if count_match := re.search(r'\d+', element_count):
+            current_count = int(count_match.group())
+            return (f"{element}{current_count - 1}" if current_count > 2
+                    else element)  # Remove count when it's 2
+        return element
 
-def decrease_element_count(molecular_formula, element_to_decrease):
-    # Define a regular expression pattern to match the specified element
-    pattern = r'({})(?![a-z])\d*'.format(element_to_decrease)
+    return re.sub(pattern, replace_element, molecular_formula)
 
-    def replace_element(match):
-        element_count = match.group()
-        element = re.match(r'([A-Z][a-z]*)', element_count).group()
-        count = re.search(r'\d+', element_count)
 
-        if count:
-            current_count = int(count.group())
-            if current_count > 2:
-                new_count = current_count - 1
-                return element + str(new_count)
+def have_swapped_adjacent_digits(float1: float, float2: float) -> bool:
+    # Convert floats to strings
+    str1, str2 = str(float1), str(float2)
+
+    # Remove last two digits for comparison
+    str1 = str1[:-2]
+    str2 = str2[:-2]
+
+    # Remove decimal points for comparison
+    str1_no_dot = str1.replace('.', '')
+    str2_no_dot = str2.replace('.', '')
+
+    # Check lengths
+    if len(str1_no_dot) != len(str2_no_dot) or len(str1_no_dot) < 2:
+        return False
+
+    # Find positions that differ
+    diff_positions = [i for i in range(len(str1_no_dot))
+                      if str1_no_dot[i] != str2_no_dot[i]]
+
+    # Must have exactly 2 differences for a single swap
+    if len(diff_positions) != 2:
+        return False
+
+    # The positions must be adjacent
+    if diff_positions[1] - diff_positions[0] != 1:
+        return False
+
+    # Check if it's actually a swap
+    pos1, pos2 = diff_positions
+    return (str1_no_dot[pos1] == str2_no_dot[pos2] and
+            str1_no_dot[pos2] == str2_no_dot[pos1])
+
+
+
+def differ_in_single_digit_except_last_two(float1: float, float2: float) -> bool:
+    """
+    Checks if two floating-point numbers differ by exactly one digit, excluding the last two digits.
+    Handles trailing zeros and decimal points in the comparison.
+
+    Args:
+        float1: First floating-point number
+        float2: Second floating-point number
+
+    Returns:
+        True if numbers differ by exactly one digit (excluding last two), False otherwise
+
+    Examples:
+        >>> differ_in_single_digit_except_last_two(123.45, 153.45)
+        True
+        >>> differ_in_single_digit_except_last_two(123.45, 153.46)
+        False
+        >>> differ_in_single_digit_except_last_two(123.450, 153.45)
+        True
+    """
+    # Convert to strings and normalize by removing trailing zeros and decimal points
+    str1 = str(float1).rstrip('0').rstrip('.')
+    str2 = str(float2).rstrip('0').rstrip('.')
+
+    # Quick validation checks
+    if len(str1) != len(str2) or len(str1) < 3:  # Need at least 3 digits for comparison
+        return False
+
+    # Extract main part and last two digits
+    main1, last_two1 = str1[:-2], str1[-2:]
+    main2, last_two2 = str2[:-2], str2[-2:]
+
+    # Last two digits must match
+    if last_two1 != last_two2:
+        return False
+
+    # Count differing digits in main part
+    return sum(1 for a, b in zip(main1, main2) if a != b) == 1
+
+
+def calculate_molecular_weight(formula):
+    # Dictionary of atomic weights for elements up to Plutonium (94)
+    # Values are in atomic mass units (amu) or g/mol
+    atomic_weights = {
+        "H": 1.008, "D": 2.0141, "He": 4.002602, "Li": 6.94, "Be": 9.0121831, "B": 10.81, "C": 12.011,
+        "N": 14.007, "O": 15.999, "F": 18.9984, "Ne": 20.1797, "Na": 22.98977, "Mg": 24.305, "Al": 26.98154,
+        "Si": 28.085, "P": 30.97376, "S": 32.06, "Cl": 35.45, "Ar": 39.948, "K": 39.0983, "Ca": 40.078,
+        "Sc": 44.955908, "Ti": 47.867, "V": 50.9415, "Cr": 51.9961, "Mn": 54.938044, "Fe": 55.845,
+        "Co": 58.933194, "Ni": 58.6934, "Cu": 63.546, "Zn": 65.38, "Ga": 69.723, "Ge": 72.630,
+        "As": 74.921595, "Se": 78.971, "Br": 79.904, "Kr": 83.798, "Rb": 85.4678, "Sr": 87.62,
+        "Y": 88.90584, "Zr": 91.224, "Nb": 92.90637, "Mo": 95.95, "Tc": 98, "Ru": 101.07,
+        "Rh": 102.90550, "Pd": 106.42, "Ag": 107.8682, "Cd": 112.414, "In": 114.818, "Sn": 118.710,
+        "Sb": 121.760, "Te": 127.60, "I": 126.90447, "Xe": 131.293, "Cs": 132.90545196, "Ba": 137.327,
+        "La": 138.90547, "Ce": 140.116, "Pr": 140.90766, "Nd": 144.242, "Pm": 145, "Sm": 150.36,
+        "Eu": 151.964, "Gd": 157.25, "Tb": 158.92535, "Dy": 162.500, "Ho": 164.93033,
+        "Er": 167.259, "Tm": 168.93422, "Yb": 173.04, "Lu": 174.9668, "Hf": 178.49,
+        "Ta": 180.94788, "W": 183.84, "Re": 186.207, "Os": 190.23, "Ir": 192.217,
+        "Pt": 195.084, "Au": 196.96657, "Hg": 200.592, "Tl": 204.38, "Pb": 207.2,
+        "Bi": 208.9804, "Po": 209, "At": 210, "Rn": 222, "Fr": 223, "Ra": 226,
+        "Ac": 227, "Th": 232.0377, "Pa": 231.03588, "U": 238.02891, "Np": 237, "Pu": 244
+    }
+
+    # Parse the molecular formula using regex
+    formula_components = re.findall(r"([A-Z][a-z]?)(\d*)", formula)
+
+    # Calculate total molecular weight
+    mol_weight = 0.0
+    for element, count in formula_components:
+        # Get atomic weight from dictionary, default to 0.0 if element not found
+        element_weight = atomic_weights.get(element, 0.0)
+        # If no count specified, assume 1, otherwise convert string to integer
+        mol_weight += element_weight * (int(count) if count else 1)
+
+    return mol_weight
+
+def remove_spaces_within_brackets(s, max_chars=20):
+    """
+    Removes all spaces within brackets () or [] if the number of non-space characters inside
+    is within max_chars. Handles nested brackets appropriately without affecting spaces outside
+    the brackets.
+
+    Args:
+    - s (str): The input string.
+    - max_chars (int): Maximum number of non-space characters between opening and closing brackets.
+
+    Returns:
+    - str: The modified string with spaces removed within qualifying brackets.
+    """
+    stack = []
+    # Mapping of opening brackets to their corresponding closing brackets
+    opening_to_closing = {'(': ')', '[': ']'}
+    # Mapping of closing brackets to their corresponding opening brackets
+    closing_to_opening = {')': '(', ']': '['}
+
+    s_list = list(s)  # Convert string to list for mutable operations
+    remove_space_ranges = []  # List to hold ranges where spaces need to be removed
+
+    for i, char in enumerate(s_list):
+        if char in opening_to_closing:
+            # Push opening bracket and its position onto the stack
+            stack.append((char, i))
+        elif char in closing_to_opening:
+            if stack and stack[-1][0] == closing_to_opening[char]:
+                # Pop the last opening bracket from the stack
+                open_char, open_pos = stack.pop()
+                close_pos = i
+                # Extract the substring inside the brackets
+                content = ''.join(s_list[open_pos + 1:close_pos])
+                # Count the number of non-space characters
+                non_space_chars = len(content.replace(' ', ''))
+                if non_space_chars <= max_chars:
+                    # Define the range for space removal (exclusive of brackets)
+                    remove_space_ranges.append((open_pos + 1, close_pos))
             else:
-                return element  # Remove the count when it's 2
-        else:
-            return element
-
-    modified_formula = re.sub(pattern, replace_element, molecular_formula)
-    return modified_formula
-def is_element_in_formula(molecular_formula, element_to_check):
-    # Extract elements and their counts from the formula using regex
-    pattern = r'([A-Z][a-z]*)(\d*)'
-    elements_and_counts = re.findall(pattern, molecular_formula)
-
-    # Check if the element is present in the extracted elements
-    for element, count in elements_and_counts:
-        if element == element_to_check:
-            return True
-    return False
-
-def remove_short_lines(text):
-    # Split the text into lines
-    lines = text.split('\n')
-    # Filter out lines shorter than 6 characters
-    filtered_lines = [line for line in lines if len(line) >= 6]
-    # Join the filtered lines back into a string
-    modified_text = '\n'.join(filtered_lines)
-    return modified_text
-
-def check_molecular_formula(molecular_formula):
-    # Define a regular expression pattern to match an element and its count
-    pattern = r'([A-Z][a-z]*)(\d*)'
-    def replace_element(match):
-        element = match.group(1)
-        count = match.group(2)
-        if count == '1':
-            return element  # Remove the '1'
-        else:
-            return match.group(0)  # Keep the original element and count
-    corrected_formula = re.sub(pattern, replace_element, molecular_formula)
-    return corrected_formula
-def delete_element_from_formula(molecular_formula, element_to_delete):
-    # Define a regular expression pattern to match an element and its count
-    pattern = r'([A-Z][a-z]*)(\d*)'
-
-    # Function to replace an element and its count
-    def replace_element(match):
-        element = match.group(1)
-        count = match.group(2)
-        if element == element_to_delete:
-            return ''  # Remove the specified element and its count
-        else:
-            if count == '1':
-                return element  # Remove the '1'
-            else:
-                return match.group(0)  # Keep the original element and count
-    corrected_formula = re.sub(pattern, replace_element, molecular_formula)
-    return corrected_formula
-
-def add_space_after_pattern(input_string):
-    # Define the pattern to match "XXX.XXXXYYY" where X is a digit and Y can be anything
-    pattern = r'(\d{3}\.\d{4})(\w{3})'
-    # Use re.sub() to add a space after the pattern
-    result = re.sub(pattern, r'\1 \2', input_string)
-    return result
-
-def check_formula(text,entity):
-    global flag
-    global pdf
-    new_formula_anion = new_formula.replace("+", "-")
-    new_formula_neutral = new_formula.replace("+", "")
-    formatted_modified_mass = f"{Formula(new_formula).monoisotopic_mass:.4f}"
-    formatted_modified_mass_anion = f"{Formula(new_formula_anion).monoisotopic_mass:.4f}"
-    formatted_modified_mass_neutral = f"{Formula(new_formula_neutral).monoisotopic_mass:.4f}"
-    if formatted_calculated_mass == formatted_modified_mass and new_formula_anion != mol_formula_anion:
-        a=f'{text} {i + 1} {element_to_test}{entity}, the following molecular formula fits the mass reported in the SI: {new_formula} ({formatted_modified_mass})'
-        pdf.set_text_color(24, 116, 205)
-        add_sentence(pdf,a)
-        pdf.set_text_color(0, 0, 0)
-        print(
-            CVIOLET + f'{text} {i + 1} {element_to_test}{entity}, the following molecular formula fits the mass reported in the SI: {new_formula} ({formatted_modified_mass})' + CEND)
-        flag=1
-    elif formatted_calculated_mass == formatted_modified_mass_anion and new_formula_anion != mol_formula_anion:
-        a=f'{text} {i + 1} {element_to_test}{entity}, the following molecular formula fits the mass reported in the SI: {new_formula_anion} ({formatted_modified_mass_anion})'
-        pdf.set_text_color(24, 116, 205)
-        add_sentence(pdf, a)
-        pdf.set_text_color(0, 0, 0)
-        print(
-            CVIOLET + f'{text} {i + 1} {element_to_test}{entity}, the following molecular formula fits the mass reported in the SI: {new_formula_anion} ({formatted_modified_mass_anion})' + CEND)
-        flag=1
-    elif formatted_calculated_mass == formatted_modified_mass_neutral and new_formula_neutral != mol_formula_neutral:
-        a=f'{text} {i + 1} {element_to_test}{entity}, the following molecular formula fits the mass reported in the SI: {new_formula_neutral} ({formatted_modified_mass_neutral})'
-        b=f'However, the reported mass was probably measured for the cation: {new_formula} ({formatted_modified_mass})'
-        pdf.set_text_color(24, 116, 205)
-        add_sentence(pdf, a)
-        add_sentence(pdf, b)
-        pdf.set_text_color(0, 0, 0)
-        print(
-            CVIOLET + f'{text} {i + 1} {element_to_test}{entity}, the following molecular formula fits the mass reported in the SI: {new_formula_neutral} ({formatted_modified_mass_neutral})' + CEND)
-        print(
-            CVIOLET + f'However, the reported mass was probably measured for the cation: {new_formula} ({formatted_modified_mass})' + CEND)
-        flag=1
-
-#Initialize PDF Output
-pdf = PDF()
-pdf.add_page()
-
-# Get the names of the PDF files in the source folder
-filepaths = list_filepaths_in_folder(folder_path)
-
-# Extract the text from source PDF and store it in the variable file_contents
-for pdf_file_path in filepaths:
-    error=0
-    correct=0
-    try:
-
-        file_contents = extract_text_from_pdf(pdf_file_path) # load the text content into a string
-
-        #print(file_contents)
-
-        replacements = [("HRMS", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa HRMS "), (" calc ", " calcd "),
-                        (" cald.", " calcd "), ("calcd.", "calcd"), ("calcd:", "calcd"), ("Calcd.", "calcd"),
-                        ("calcd for", "calcd"), ("Calcd for", "calcd"), ("m/z:", "m/z"), ("):", ")"),
-                        ("for [M+H]", ""), ("for [M-H]", ""), ("[M+H]+", ""), ("(М+H)+", ""), ("(М+H)", ""),
-                        (" ESI ", " calcd"), ("ESI+)", " calcd"), ("ESI-)", " calcd"), ("ESI)", " calcd"),
-                        ("TOF) m/z", "calcd"), ("(m/z)", "")]
-
-        for old, new in replacements:
-            file_contents = file_contents.replace(old, new)
-
-        file_contents = ' '.join(file_contents.split()).strip()
-
-        file_contents = file_contents + "lore ipsum lore ipsum lore ipsum lore ipsum"
-
-        file_contents=convert_pattern_hrms(file_contents)
-        replacements = {
-            "=": " ",
-            "C  ": "C", "  H  ": "H", "H  ": "H", "  N  ": "N", "N  ": "N",
-            "  O  ": "O", "O  ": "O", "  S  ": "S", "S  ": "S", "  P  ": "P", "P  ": "P",
-            "  Na  ": "Na", "Na  ": "Na",
-            " C ": " C", " H ": "H", " N ": "N", " O ": "O", " S ": "S",
-            " Br ": "Br", " F ": "F", " P ": "P", " I ": "I", " Cl ": "Cl",
-            " Na ": "Na", " SNa ": "SNa", " NO ": "NO"
-        }
-
-        for old, new in replacements.items():
-            file_contents = file_contents.replace(old, new)
-
-        file_contents = remove_short_lines(file_contents)
-
-        # The following commands are aimed at cleaning up the data
-
-        file_contents = adjust_space_around_decimal(file_contents)  # 278. 2334 -> 278.2334
-        file_contents = replace_comma_with_decimal(file_contents) # 278,2334 -> 278.2334
-
-        # Normalize the writing of the following words to all lowercase, e.g. CalC -> calc
-
-        list_of_strings_to_be_all_lowercase=['calc','anal','elem','mass','obs','for','page','found','exact','mono','meas']
-        for string in list_of_strings_to_be_all_lowercase:
-            file_contents = normalize_word(string, file_contents)
-
-        # Define a regular expression pattern to match the specified sequences in single lines
-        pattern = re.compile(r"\bS\d+\b\s*\n")  # Matches standalone S{number} followed by a line break
-
-        # Use the sub() function to replace matched patterns with an empty string
-        file_contents = re.sub(pattern, "", file_contents)
-
-        # remove page numbers
-        file_contents = file_contents.replace("&", " ")
-
-        for number in range(179, 0, -1):
-            file_contents = file_contents.replace(f" S{number}", " ")
-        for number in range(179, 0, -1):
-            file_contents = file_contents.replace(f" s{number}", " ")
-        for number in range(179,0, -1):
-            file_contents = file_contents.replace(f" {number} ", " ")
-        file_contents = remove_lines_with_pattern(file_contents)
-
-        replacements = {
-            "The":" ", "FAB":" ","page": " ", "of": " ", " is ": " ", "Figure": " ", " N ": " ", " O ": " ", " NO ": " ",
-            "calculated": "calcd", "calc'd": "calcd","cal'd":"calcd","calc.'d": "calcd","calc'ed": "calcd", "calc’d": "calcd","calc.’d": "calcd","calc’ed": "calcd", "calc`d": "calcd",
-            "calc`ed": "calcd","calc´d": "calcd", "calc′d.":"calcd","calc´ed": "calcd","cal´d": "calcd","calced":"calcd","calc:":"calcd","calc for":"calcd","for": "", "C ": "C:", "C,": "C:", "C.": "C:", "C'": "C:",
-            "%C": "C:", "C%": "C:", "C[%": "C:", "C(%": "C:", "found,":"found","berechnet für":"calcd", "berechnet":"calcd", "gefunden":"found"
-        }
-
-        for original, replacement in replacements.items():
-            file_contents = file_contents.replace(original, replacement)
-
-        file_contents = ' '.join(file_contents.split()).strip()
-
-        start_delimiter = "calc"
-        end_delimiter = "C:"
-        file_contents = delete_between_strings(file_contents, start_delimiter, end_delimiter)
-        file_contents = ' '.join(file_contents.split()).strip()
-        replacements = {
-            "was": "", "for": "", "mass": "", "and found": " ", "found": " ", "and": " ", "exact": " ",
-            "rel": " ", ",": " ", ":.": " ", "[  ": "[", "[ ": "[", "(  ": "(", "( ": "(", ";": " ",
-            "(": " ", ")": " ", "monoisotopic": " "
-        }
-
-        for original, replacement in replacements.items():
-            file_contents = file_contents.replace(original, replacement)
-
-        file_contents = re.sub(r'\[M[^\]]*\]|\[M[^\,]]*?\n[^\]]*\]', '', file_contents)
-        file_contents = re.sub(r'\(M[^\)]*\)', '', file_contents)
-        file_contents = re.sub(r'\{M[^\}]*\}', '', file_contents)
-
-        replacements = {
-            "2M+Na": " ", "2M - H": "", "₁": "1", "₂": "2", "₃": "3", "₄": "4", "₅": "5",
-            "₆": "6", "₇": "7", "₈": "8", "₉": "9", "₀": "0", "¹": "1", "²": "2", "³": "3",
-            "⁴": "4", "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9", "⁰": "0", "[": "",
-            "]": "", "measured": " ", "mono": " "
-        }
-
-        for original, replacement in replacements.items():
-            file_contents = file_contents.replace(original, replacement)
-
-        file_contents = re.sub(r'M(?![gno])', '', file_contents)
-        file_contents = re.sub(r"page \d+ of \d+", "", file_contents, flags=re.DOTALL)
-        file_contents = re.sub(r"Chemical Science", "", file_contents)
-
-        file_contents = ' '.join(file_contents.split()).strip()
-
-        replacements = {
-            "+": " ", "ꞏ": " ","-":"", "=": " ", "nalysis calc": "", "nalysis: calc": "", "(%) calc": "",
-            "EA: calc": "", "av.": "", "nal.calc": "", "..": ".", "was calcd for": "calcd ",
-            "exact mass for": "calcd ", "requires": "calcd ", "ass required for": "calcd ",
-            "and found": "", "found as": "", "found.:": "","found:":"", "found,":"","Foumd": "", "OO": " ", "F ound": "",
-            "we calcd": "","found":""
-        }
-
-        for original, replacement in replacements.items():
-            file_contents = file_contents.replace(original, replacement)
-
-        #print(file_contents)
-
-        #chars_to_remove = ['DFT calculated', 'alculated tot', 'alculated en', 'alculated IR', 'alculated di',
-        chars_to_remove = ['ber.', 'gef.',"measured",'measd','ass found',"found", "Found",'expected','Expected',"required",
-                             'expect',"requires","Requires",'dcalc',  ' OCl', ' Br ', 'O Cl ','fFor', 'alcd for C:', 'nal. Cal',
-                           'nal. cal', 'nal Calc', 'nal calc', 'ensity (calc', 'to calc','most','abundant','isotope','peak',
-                          'Observed', 'observed', 'Anal. Calcd', '3. Calc', 'bcalc','calcd C:','monoisotopic','was',
-                           'ρca,lcd', 'Anal. calc', 'anal. calc', 'Exp.','Error', "(",'fo ','und','not','OO',' S',
-                           ")","for", "For", "m/z",'m/','z:','exact mass', "Dcalc"," is", 'meas']
-
-        file_contents=remove_chars(file_contents,chars_to_remove)
-
-        replacements = {
-            "page": " ", "of": " ", "TOF": " ", "𝑀": " ", "EI": " ", " . ": " ", ":": " ", "Δ": " ",
-            "𝛼": " ", " a ": " ", " M ": " ", " H ": " ", "ESI": " ", " Na ": " ", " K ": " ",
-            " NH4 ": " ", "Obs.": " ", "obs": " ", "78.9183": "", " 48Ti": "[48Ti]",
-            " 46Ti": "[46Ti]", " 47Ti": "[47Ti]", " 80Se": "[80Se]", " 2H": "D", " [3H]": "[3H]",
-            " 10B": "[10B]",  "127I": "[127I]", "120Sn":"[120Sn]", "119Sn":"[119Sn]", "118Sn":"[118Sn]","N23Na": "*N23*Na","F23Na": "*F23*Na","H23Na": "*H23*Na","H28Si": "*H28*Si","H11B": "*H11*B", "H13Co": "*H13*Co",
-            "H13Cl": "*H13*Cl", "H18O": "*H18*O", "H218O": "*H218*O", "N18O": "*N18*O",
-            "H35Cl": "*H35*Cl", "H37Cl": "*H37*Cl", "H10B":"*H10*B","H19F": "*H19*F", "Br79": "[79Br]",
-            " 79Br": "[79Br]", " 81Br": "[81Br]", "18O": "[18O]", "74Ge": "[74Ge]","65Cu":"[65Cu]","63Cu":"[63Cu]",
-            "Br81": "[81Br]", " 35Cl": "[35Cl]", " 37Cl": "[37Cl]", " 11B": "[11B]",
-            " 32S": "S", " 31P": "P","35Cl":"[35Cl]","80Se":"[80Se]","37Cl":"[37Cl]","28Si":"[28Si]","13C":"[13C]","[13C]l":"13Cl","79Br":"[79Br]","81Br":"[81Br]","11B":"[11B]","10B":"[10B]","[10B]r":"10Br","[[":"[","]]":"]","*H13*Cl": "H13Cl", "*H18*O": "H18O", "*H218*O": "H218O",
-            "*N18*O": "N18O", "*H13*Co": "H13Co", "*H37*Cl": "H37Cl", "*H35*Cl": "H35Cl",
-            "*H28*Si": "H28Si","*H10*B":"H10B","*H23*Na": "H23Na","*F23*Na": "F23Na","*N23*Na": "N23Na","*H11*B":"H11B", "*H19*F": "H19F", "cacld": "", "calcd.": "calcd ", "calc’d": "calcd ",
-            "calc.": "calcd ", "calclulated": "calcd ", "calcluated": "calcd ", "caculated": "calcd ",
-            "calcd gcm": " ", " is ": " ", "calcd": "calcd ", "calcd  ": "calcd "
-        }
-
-        for original, replacement in replacements.items():
-            file_contents = file_contents.replace(original, replacement)
-
-        file_contents = re.sub(r'[^\w\s.\[\]]', '', file_contents)
-        file_contents = ' '.join(file_contents.split()).strip()
-        file_contents = ' '.join(file_contents.split()).strip()
-
-        replacements = {}
-        for i in range(1, 10):
-            old_str = f"calcd C{i}"
-            new_str = f"HeHeXe{i}"
-            replacements[old_str] = new_str
-        for old_str, new_str in replacements.items():
-            file_contents = file_contents.replace(old_str, new_str)
-        file_contents = file_contents.replace("calcd", "")
-        for old_str, new_str in replacements.items():
-            file_contents = file_contents.replace(new_str, old_str)
-
-        # Use re.sub() to find and concatenate formulas in the text
-        formula_pattern = r'[A-Z][a-z]?\d*'
-        file_contents = re.sub(f'({formula_pattern} {formula_pattern})', concatenate_formulas, file_contents)
-
-        # e.g. 1232.344.dsds and convert the full stop into a space the text becomes 1232.344 dsds
-        file_contents = re.sub(r'(\d+\.\d+)\.', r'\1 ', file_contents)
-
-        # remove everything that is two characters/digits or shorter
-        file_contents = re.sub(r' (?<![a-zA-Z0-9]) [a-zA-Z0-9] (?![a-zA-Z0-9]) ', ' ', file_contents)
-        file_contents = re.sub(r' (?<![a-zA-Z0-9]) [a-zA-Z0-9]{2} (?![a-zA-Z0-9]) ', ' ', file_contents)
-        file_contents = ' '.join(file_contents.split()).strip()
-        file_contents = add_space_after_pattern(file_contents)
-
-        search_string = "calcd "
-        num_characters = 45
-        result = extract_text_after_string(file_contents, search_string, num_characters)
-        result = [s.lstrip() for s in result]
-        # Assuming 'result' is a list of strings
-        # Filter elements to only those that can be split into 3 or more parts
-
-        filtered_elements = [element for element in result if len(element.split()) > 2]
-
-        # Now, you can safely assume each element in 'filtered_elements' has at least three parts
-        # and proceed to extract them without worrying about an 'index out of range' error
-
-        mol_formula = [element.split()[0] for element in filtered_elements]
-        raw_calc_mass_from_SI = [element.split()[1] for element in filtered_elements]
-        raw_found_mass_from_SI = [element.split()[2] for element in filtered_elements]
-
-        # get the float BEFORE calc in case the order is different
-
-        num_characters = 25
-        result2 = extract_text_before_string(file_contents, search_string, num_characters)
-        result2 = [extract_float_number(xxx) for xxx in result2]
-
-        result2, raw_found_mass_from_SI = exchange_if_float_list(result2, raw_found_mass_from_SI)
-
-        #replace N0 (N zero) by NO
-        mol_formula = [element.replace('N0', "NO") for element in mol_formula]
-        mol_formula = [element.replace('oH', "0H") for element in mol_formula]
-        # change C12h13 into C12H13
-        converted_formulas = [re.sub(r'C(\d+)h(\d+)', lambda m: f"C{m.group(1)}H{m.group(2)}", formula) for formula in
-                              mol_formula]
-        mol_formula = converted_formulas
-
-        for i in range(len(mol_formula)):
-            x = len(raw_calc_mass_from_SI[i])
-            d = mol_formula[i][-x:]
-            try:
-                calc_mass = float(raw_calc_mass_from_SI[i])
-
-                if abs(calc_mass - float(d)) <= 0.01 * calc_mass:
-                    raw_found_mass_from_SI[i], raw_calc_mass_from_SI[i] = raw_calc_mass_from_SI[i], d
-                    # Remove the floating-point portion from the mol_formula
-                    mol_formula[i] = mol_formula[i][:-x]
-            except ValueError:
+                # Unmatched closing bracket; ignore or handle as needed
                 pass
 
-        # remove colons in formulas, e.g. ["H2O.", "C6H12O6.", "NaCl."] -> ["H2O", "C6H12O6", "NaCl"]
-        mol_formula = [element.replace('.', "") for element in mol_formula]
+    # Sort ranges in descending order of start index to handle inner brackets first
+    remove_space_ranges.sort(key=lambda x: x[0], reverse=True)
 
-        #list incorrect formulas
-        incorrect_formulas = [element for element in mol_formula if not is_molecular_formula(element)]
+    for start, end in remove_space_ranges:
+        # Extract the substring within the current bracket (excluding brackets)
+        substring = ''.join(s_list[start:end])
+        # Remove all spaces within this substring
+        substring_no_spaces = substring.replace(' ', '')
+        # Replace the original substring with the modified one
+        s_list[start:end] = list(substring_no_spaces)
 
-        # filters results where raw_calc_mass... and raw_found_m.. are convertible to float AND mol_formula is valid
-        if len(mol_formula)>0 and len(raw_found_mass_from_SI)==len(raw_calc_mass_from_SI)==len(mol_formula):
+    # Join the list back into a string and return
+    return ''.join(s_list)
 
-            # Assuming mol_formula, raw_calc_mass_from_SI, and raw_found_mass_from_SI are defined
-            # and is_convertible_to_float and is_molecular_formula functions are defined
 
-            # Perform the filtering
-            filtered_tuples = [(xn, yn, zn) for xn, yn, zn in
-                               zip(mol_formula, raw_calc_mass_from_SI, raw_found_mass_from_SI) if
-                               is_convertible_to_float(yn) and is_convertible_to_float(zn) and is_molecular_formula(xn)]
+def isotope_correct(text):
+    """
+    Applies a series of substitutions to a text to correct for isotope labeling and other specific replacements.
 
-            # Check if filtered_tuples is empty
-            if filtered_tuples:
-                filtered_x, filtered_y, filtered_z = zip(*filtered_tuples)
-                # Convert zipped tuples back to lists if necessary
-                filtered_x = list(filtered_x)
-                filtered_y = list(filtered_y)
-                filtered_z = list(filtered_z)
+    Parameters:
+    text (str): The input text to be processed.
+
+    Returns:
+    str: The processed text with all substitutions applied.
+    """
+    # Dictionary of replacements for isotope corrections and other text cleanup
+    replacements = {
+        "[MALDI]":"","[MALDI-TOF]":"","detected":" ","page": " ", "of": " ",  "𝑀": " ", "EI": " ", " . ": " ", ":": " ", "Δ": " ",
+        "𝛼": " ", " a ": " ", " M ": " ", " H ": " ", "ESI": " ", " Na ": " ", " K ": " ",
+        " NH4 ": " ", "Obs.": " ", "obs": " ", "78.9183": "", "48Ti": "[48Ti]","54Fe":"[54Fe]",
+        "46Ti": "[46Ti]", "47Ti": "[47Ti]", " 2H": "D", " [3H]": "[3H]",
+        " 10B": "[10B]", "127I": "[127I]", "120Sn":"[120Sn]", "119Sn":"[119Sn]", "118Sn":"[118Sn]",
+        "N23Na": "*N23*Na", "F23Na": "*F23*Na", "H23Na": "*H23*Na", "23Na":"[23Na]","H28Si": "*H28*Si", "H11B": "*H11*B",
+        "H13Co": "*H13*Co", "H13Cl": "*H13*Cl", "H18O": "*H18*O", "H218O": "*H218*O", "N18O": "*N18*O",
+        "H35Cl": "*H35*Cl", "H37Cl": "*H37*Cl", "H10B":"*H10*B", "H19F": "*H19*F", "H81Br":"*H81*Br","H79Br":"*H79*Br","Br79": "[79Br]",
+        " 79Br": "[79Br]", " 81Br": "[81Br]", "18O": "[18O]", "74Ge": "[74Ge]", "65Cu":"[65Cu]",
+        "63Cu":"[63Cu]", "Br81": "[81Br]", " 35Cl": "[35Cl]", " 37Cl": "[37Cl]", " 11B": "[11B]",
+        " 32S": "S", " 31P": "P", "35Cl":"[35Cl]", "80Se":"[80Se]", "37Cl":"[37Cl]", "28Si":"[28Si]",
+        "13C":"[13C]", "[13C]l":"13Cl", "96Ru":"[96Ru]","79Br":"[79Br]", "81Br":"[81Br]", "11B":"[11B]", "10B":"[10B]",
+        "[10B]r":"10Br", "[[":"[", "]]":"]", "*H13*Cl": "H13Cl", "*H18*O": "H18O", "*H218*O": "H218O",
+        "*N18*O": "N18O", "*H13*Co": "H13Co", "*H37*Cl": "H37Cl", "*H35*Cl": "H35Cl","*H81Br*":"H81Br","*H79Br*":"H79Br",
+        "*H28*Si": "H28Si", "*H10*B":"H10B", "*H23*Na": "H23Na", "*F23*Na": "F23Na", "*N23*Na": "N23Na",
+        "*H11*B":"H11B", "*H19*F": "H19F", "cacld": "", "calcd.": "calcd ", "calc’d": "calcd ",
+        "calcd gcm": " ", " is ": " ", "calcd": "calcd ", "calcd  ": "calcd ","++": "+","(M":"[M", ")+":"]+ ",
+        "MALDI":"","Maldi":""," [13C]":"[13C]","  [127I]":"[127I]"," [12C":"C"," [37Cl]":"37Cl"," [35Cl]":"35Cl",
+        "C ":"C","H":"H", " N":"N"," O":"O"," Na":"Na", " Br":"Br", "N ":"N"," Cl":"Cl", " F":"F"," S":"S"," P":"P"," B":"B","M]+H+]":"M+H]+","M]-H+]":"M-H]-",
+        "MH+":"M+H]+ ","]-(":"]- ","]+)":"]+ ","]-)":"]- ","]2-)":"]2- ","]+C":"]+ C","[MM":"","=":"","[MeOH":" ","[MeCN":" ","m/z":" ","]+2 ":"]2+ ","]+1":"]+","M+ C":"M+C","+]":"]+","+calc":" calc",
+        "Na)]":"Na]","+Na)":"+Na]",";":" ","+H)]":"+H]","+K)]":"+K]","+NH4)]":"+NH4]","+H)":"+H]","H+)":"H]+","Na+)":"Na]+","-calcd":"- calcd","[M-H] ":"[M-H]-","--":"-",
+        "NH4+)":"MH4]+","M+)":"M]+","M]+)":"M]+","+)":"+","M- ":"M-","+.":"+","[MNa]+":"[M+Na]+","[MH]+":"[M+H]+",
+        " M2+ ":" [M]2+ "," M3+ ":" [M]3+ "," M4+ ":" [M]4+ "," M5+ ":" [M]5+ "," M6+ ":" [M]6+ ",
+        " M2- ": " [M]2- ", " M3- ": " [M]3- ", " M4- ": " [M]4- ", " M5- ": " [M]5- ", " M6- ": " [M]6- ","[M+H] ":"[M+H]+ ","[M+Na] ":"[M+Na]+ ","[M] ":"[M]+ ","]calcd":"] calcd","-.":"- ","M+1)":"M+1]+ ","+ꞏ":"+","]-calcd":"]- calcd"
+
+    }
+
+    # Apply each replacement in the dictionary to the text
+    for original, replacement in replacements.items():
+        text = text.replace(original, replacement)
+
+    return text
+
+
+def transform_expressions_in_text(text):
+    """
+    Transforms all chemical expressions within a given text into a standardized format.
+
+    Rules for expressions:
+    - Starts with M or nM, where n is a single digit integer.
+    - Ends with a charge (e.g., +, 2+, -).
+    - Can be enclosed in () or [] brackets.
+    - May contain spaces which are removed within the expression.
+    - Charges can be inside or outside the brackets.
+
+    The transformed expression:
+    - Contains no spaces within the expression.
+    - Preserves surrounding text intact.
+
+    Args:
+    - text (str): The input text containing chemical expressions.
+
+    Returns:
+    - str: The text with all expressions transformed accordingly.
+    """
+
+    # Step 1: Replace specific symbols with corresponding charges
+    symbol_replacements = {
+
+        '⊕': '+',
+        '•+': '+',
+        '': '+',
+        '': "+",
+        '+.':'+ ',
+        '•': '',
+        'ꞏ': '',
+        '–': '-',
+        '-':'-',
+        '−.':'- ',
+        '−': '-',  # Minus sign
+        '—': '-',  # Em dash
+        '―': '-',
+        '˗': '-',
+        '-.': '- ',
+    }
+
+    # Create a regex pattern to match all keys in symbol_replacements
+    symbols_pattern = re.compile('|'.join(map(re.escape, symbol_replacements.keys())))
+    text = symbols_pattern.sub(lambda match: symbol_replacements[match.group()], text)
+
+    # Step 2: Define regex to find expressions
+    # This pattern matches expressions enclosed in [] or () with optional charges outside
+    expression_pattern = re.compile(
+        r'[\[(]'  # Opening bracket [ or (
+        r'(\d*M?\d*[a-zA-Z\d-]*)'  # Capture group (explained above)
+        r'[])]'  # Closing bracket ] or )
+        r'(\d*\+|-)?'  # Optional charge outside the brackets
+        r'[,:]*'  # Optional trailing characters
+    )
+
+    def replace_expression(match):
+        expression_part = match.group(1)  # The main part of the expression
+        charge_outside = match.group(2)  # The charge outside the brackets, if any
+
+        # Step 3: Remove all internal brackets within the main expression
+        expression_part = re.sub(r'[\[\]()]', '', expression_part)
+
+        # Step 4: Remove all spaces within the main expression
+        expression_part = re.sub(r'\s+', '', expression_part)
+
+        if not charge_outside:
+            # Step 5: Extract charge from the main expression if charge_outside is not present
+            charge_match = re.search(r'([+-])$', expression_part)
+            if charge_match:
+                charge = charge_match.group(1)
+                expression_part = expression_part[:charge_match.start()]
             else:
+                charge = ''
+        else:
+            charge = charge_outside
 
-                # Initialize empty lists or handle the case as needed
-                filtered_x = []
-                filtered_y = []
-                filtered_z = []
+        # Step 6: Format the transformed expression
+        transformed = f'[{expression_part}]{charge}'
 
-            mol_formula = list(filtered_x)
-            raw_calc_mass_from_SI = list(filtered_y)
-            raw_found_mass_from_SI = list(filtered_z)
+        return transformed
 
-        # put the molecular formula in a [ ]+ bracket
-        mol_formula = ["[" + element + "]+" for element in mol_formula]
-        # conditionally Remove a full stop before and after raw mass strings (raw_calc.. and raw_found..)
-        raw_calc_mass_from_SI = [element.rstrip('.') for element in raw_calc_mass_from_SI]
-        raw_found_mass_from_SI = [element.rstrip('.') for element in raw_found_mass_from_SI]
-        raw_calc_mass_from_SI = [element.lstrip('.') for element in raw_calc_mass_from_SI]
-        raw_found_mass_from_SI = [element.lstrip('.') for element in raw_found_mass_from_SI]
+    # Step 7: Substitute all matching expressions in the text
+    transformed_text = expression_pattern.sub(replace_expression, text)
 
-        raw_found_mass_from_SI = [extract_number(xxx) for xxx in raw_found_mass_from_SI]
-        raw_calc_mass_from_SI = [extract_number(xxx) for xxx in raw_calc_mass_from_SI]
+    return transformed_text
 
-        # convert masses from strings into floating numbers
+def transform_molecular_formula(formula):
+  """
+  Transforms a molecular formula string to a standardized format.
 
-        mass_calculated_from_SI = [float(element) if element is not None and is_convertible_to_float(element) else 0.01
-                                   for element in raw_calc_mass_from_SI]
-        mass_reported_from_SI = [float(element) if element is not None and is_convertible_to_float(element) else 0.01
-                                   for element in raw_found_mass_from_SI]
+  Args:
+    formula: The molecular formula string to transform.
 
-        if os.path.basename(pdf_file_path).lower() != 'desktop.ini':
-            a=f"Analysis for: {pdf_file_path}"
-            print(f"\nAnalysis for: {pdf_file_path}")
-            add_sentence(pdf,a)
-            if len(mol_formula)==0:
-                print("No HRMS data found")
-                a=f"No HRMS data found."
-                add_sentence(pdf,a)
-            if incorrect_formulas:
-                print(f"Incorrect Formulas: {incorrect_formulas}")
-                a=f"One or more incorrect formulas"
-                add_sentence(pdf,a)
+  Returns:
+    The transformed molecular formula string.
+  """
 
-        # Calculate monisotopic mass from molecular formula, calculate mass error
-        for element1, element2, element3 in zip(mol_formula, mass_calculated_from_SI, mass_reported_from_SI):
-            # Calculate the monoisotopic mass for the original formula
-            element1 = check_molecular_formula(element1)
-            mol_formula_anion = element1.replace("+", "-")
-            mol_formula_neutral = element1.replace("+", "")
-            calculated_mass_from_formula = Formula(element1).monoisotopic_mass
-            calculated_mass_anion = Formula(mol_formula_anion).monoisotopic_mass
-            calculated_mass_neutral = Formula(mol_formula_neutral).monoisotopic_mass
-            #fun test, delete later - maybe not
-            fun1=decrease_element_count(mol_formula_neutral,'H')
-            fun1b=mol_formula_neutral.replace("Na","")
-            f=Formula(mol_formula_neutral)
-            fun_mw=calculate_molecular_weight(mol_formula_neutral)
-            fun_mw_minus1=calculate_molecular_weight(fun1)
-            fun_mw_minus_Na=calculate_molecular_weight(fun1b)
-            fun_mw2=fun_mw_minus1+1
-            fun_mw3=fun_mw+1
-            fun_mw4=fun_mw+23
-            fun_mw5=fun_mw_minus_Na+23
-            fun_mw_rounded=f"{fun_mw:.4f}"
-            fun_mw2_rounded = f"{fun_mw2:.4f}"
-            fun_mw3_rounded = f"{fun_mw3:.4f}"
-            fun_mw4_rounded = f"{fun_mw4:.4f}"
-            fun_mw5_rounded = f"{fun_mw5:.4f}"
-            fun2=Formula(fun1).monoisotopic_mass
-            fun2b=f"{fun2:.4f}"
-            fun3=fun2+1
-            fun4=f"{fun3:.4f}"
-            fun5=calculated_mass_neutral+1
-            fun6=f"{fun5:.4f}"
+  # Remove all round brackets and colons
+  formula = formula.replace("(", "").replace(")", "").replace(":", "").replace("]+-", "]+")
 
-            # Format the calculated masses with 4 decimal places
-            formatted_calculated_mass = f"{element2:.4f}"
-            formatted_reported_mass = f"{element3:.4f}"
-            formatted_calculated_mass_from_formula = f"{calculated_mass_from_formula :.4f}"
-            formatted_calculated_mass_from_formula_anion = f"{calculated_mass_anion:.4f}"
-            formatted_calculated_mass_from_formula_neutral = f"{calculated_mass_neutral:.4f}"
-            fm1 = float(formatted_calculated_mass)
-            fm2 = float(formatted_reported_mass)
-            fm3 = float(formatted_calculated_mass_from_formula)
-            fm4 = float(formatted_calculated_mass_from_formula_anion)
-            fm5 = float(formatted_calculated_mass_from_formula_neutral)
+  # Remove ALL spaces within brackets and move the + or - sign after the bracket (if any)
+  formula = re.sub(r'\[(.*?)]', lambda m: '[' + m.group(1).replace(' ', '') + ']' + ('+' if '+' in m.group(1) else '') + ('-' if '-' in m.group(1) else ''), formula)
 
-            # Calculate mass errors
-            if fm2 == 0:
-                break
-            mass_error1 = abs(round((fm1 / fm2 - 1) * 10 ** 6, 1))
-            mass_error2 = abs(round((fm3 / fm2 - 1) * 10 ** 6, 1))
-            mass_error_anion = abs(round((fm4 / fm2 - 1) * 10 ** 6, 1))
-            mass_error_neutral = abs(round((fm5 / fm2 - 1) * 10 ** 6, 1))
+  # Replace "M-" with "M-"
+  formula = re.sub(r'M\s*–', 'M-', formula)
 
-            flag=0
+  # Replace "M +" or "M+" with "M+"
+  formula = re.sub(r'M\s*\+', 'M+', formula)
 
-            # Cation Mode !!! Print calculated, recalculated, and reported masses with respective errors
-            if formatted_calculated_mass == formatted_calculated_mass_from_formula:
-                flag=1
-                if mass_error2 > 10.0 or mass_error1 > 10.0:
-                    a = f"Calculated for {element1} {formatted_calculated_mass} ({formatted_calculated_mass_from_formula}) found {formatted_reported_mass} Mass Error: {mass_error1} ppm ({mass_error2} ppm)"
-                    pdf.set_text_color(255, 0, 0)  # Black color
-                    add_sentence(pdf,a)
-                    pdf.set_text_color(0, 0, 0)  # Black color
-                    print(
-                        f"Calculated for {element1} {formatted_calculated_mass} "
-                        f"({formatted_calculated_mass_from_formula}) found {formatted_reported_mass} "
-                        f"\033[91mMass Error:  {mass_error1} ppm ({mass_error2} ppm)\033[0m"
-                        )
-                    error=1
-                else:
-                    a=f"Calculated for {element1} {formatted_calculated_mass} ({formatted_calculated_mass_from_formula}) found {formatted_reported_mass} Mass Error: {mass_error1} ppm ({mass_error2} ppm)"
-                    print(
-                        f"Calculated for {element1} {formatted_calculated_mass} "
-                        f"({formatted_calculated_mass_from_formula}) found {formatted_reported_mass} "
-                        f"Mass Error: {mass_error1} ppm ({mass_error2} ppm)"
-                        )
-                    add_sentence(pdf,a)
-                    flag=1,
-                    correct=1
+  # Ensure standardized ion is surrounded by one space, BUT NOT IF IT IS THE LAST THING
+  formula = re.sub(r'([^ ])(\[\w+][+-]?)(?=\S)', r'\1 \2 ', formula)  # Include optional + or - in the ion group
 
-            # Check anion mode
-            elif formatted_calculated_mass == formatted_calculated_mass_from_formula_anion:
-                flag=1
-                fm3=fm1
-                if mass_error_anion > 10.0 or mass_error1 > 10.0:
-                    a = f"Calculated for {mol_formula_anion} {formatted_calculated_mass} ({formatted_calculated_mass_from_formula_anion}) found {formatted_reported_mass} Mass Error: {mass_error1} ppm ({mass_error_anion} ppm)"
-                    pdf.set_text_color(255, 0, 0)  # Black color
-                    add_sentence(pdf, a)
-                    pdf.set_text_color(0, 0, 0)  # Black color
-                    print(
-                        f"Calculated for {mol_formula_anion} {formatted_calculated_mass} "
-                        f"({formatted_calculated_mass_from_formula_anion}) found {formatted_reported_mass} "
-                        f"\033[91mMass Error:  {mass_error1} ppm ({mass_error_anion} ppm)\033[0m"
-                    )
-                    error = 1
-                else:
-                    a = f"Calculated for {mol_formula_anion} {formatted_calculated_mass} ({formatted_calculated_mass_from_formula_anion}) found {formatted_reported_mass} Mass Error: {mass_error1} ppm ({mass_error_anion} ppm)"
-                    add_sentence(pdf, a)
-                    print(
-                        f"Calculated for {mol_formula_anion} {formatted_calculated_mass} "
-                        f"({formatted_calculated_mass_from_formula_anion}) found {formatted_reported_mass} "
-                        f"Mass Error: {mass_error1} ppm ({mass_error_anion} ppm)"
-                        )
-                    flag=1
-                    correct=1
-            # Check neutral
+  # Add brackets if "M" is present without brackets
+  if "M" in formula and "[" not in formula:
+    formula = "[" + formula + "]"
 
-            elif formatted_calculated_mass == formatted_calculated_mass_from_formula_neutral:
-                if mass_error_neutral > 10.0:
-                    pdf.set_text_color(255, 0, 0)  # Red color
-                    a =  f"Calculated for {mol_formula_neutral} {formatted_calculated_mass} ({formatted_calculated_mass_from_formula_neutral}) found {formatted_reported_mass} Mass Error: {mass_error_neutral} ppm ({mass_error_neutral} ppm)"
-                    add_sentence(pdf, a)
-                    pdf.set_text_color(0, 0, 0)  # Black color
-                    print(
-                        f"Calculated for {mol_formula_neutral} {formatted_calculated_mass} "
-                        f"({formatted_calculated_mass_from_formula_neutral}) found {formatted_reported_mass} "
-                        f"\033[91mMass Error:  {mass_error_neutral} ppm ({mass_error_neutral} ppm)\033[0m"
-                    )
+  # Add spaces around "calcd for", "found"
+  formula = re.sub(r'(calcd\s*for|found)', r' \1 ', formula)
 
-                    if mass_error2 > 10.0:
-                        pdf.set_text_color(0, 255, 0)  # Green color
-                        a=f'The reported mass was probably measured for the cation: {element1} {formatted_calculated_mass_from_formula} Mass Error: {mass_error2} ppm'
-                        add_sentence(pdf, a)
-                        pdf.set_text_color(0, 0, 0)  # Black color
-                        print(CGREEN + f'The reported mass was probably measured for the cation: {element1} {formatted_calculated_mass_from_formula} \033[91mMass Error: {mass_error2} ppm\033[0m'+ CEND)
-                        error=1
-                    else:
-                        pdf.set_text_color(0, 255, 0)  # Green color
-                        a = f'The reported mass was probably measured for the cation: {element1} {formatted_calculated_mass_from_formula} Mass Error: {mass_error2} ppm'
-                        add_sentence(pdf, a)
-                        pdf.set_text_color(0, 0, 0)  # Black color
-                        print(
-                            CGREEN + f'The reported mass was probably measured for the cation: {element1} {formatted_calculated_mass_from_formula} Mass Error: {mass_error2} ppm' + CEND)
-                        error=1
-                else:
-                    a = f"Calculated for {mol_formula_neutral} {formatted_calculated_mass} ({formatted_calculated_mass_from_formula_neutral}) found {formatted_reported_mass} Mass Error: {mass_error1} ppm ({mass_error_neutral} ppm)"
-                    add_sentence(pdf, a)
-                    print(
-                        f"Calculated for {mol_formula_neutral} {formatted_calculated_mass} "
-                        f"({formatted_calculated_mass_from_formula_neutral}) found {formatted_reported_mass} "
-                        f"Mass Error: {mass_error1} ppm ({mass_error_neutral} ppm)"
-                    )
-                    correct=1
-                    if mass_error2 > 10.0:
-                        pdf.set_text_color(0, 255, 0)  # Green color
-                        a = f'The reported mass was probably measured for the cation: {element1} {formatted_calculated_mass_from_formula} Mass Error: {mass_error2} ppm'
-                        add_sentence(pdf, a)
-                        pdf.set_text_color(0, 0, 0)  # Black color
-                        print(CGREEN + f'The reported mass was probably measured for the cation: {element1} {formatted_calculated_mass_from_formula} \033[91mMass Error: {mass_error2} ppm\033[0m' + CEND)
-                        error = 1
+  # Remove double spaces
+  formula = formula.replace("++", "+").replace("++", "+").replace(",", " ")
+  formula = re.sub(r'\s+', ' ', formula)
+  formula = formula.replace("-+", "+").replace("]+-", "]+").replace("+]+", "]+ ").replace("++", "+").replace("--", "").replace(",", "+")
 
-                    else:
-                        pdf.set_text_color(0, 255, 0)  # Green color
-                        a = f'The reported mass was probably measured for the cation: {element1} {formatted_calculated_mass_from_formula} Mass Error: {mass_error2} ppm'
-                        add_sentence(pdf, a)
-                        pdf.set_text_color(0, 0, 0)  # Black color
-                        print(
-                            CGREEN + f'The reported mass was probably measured for the cation: {element1} {formatted_calculated_mass_from_formula} Mass Error: {mass_error2} ppm' + CEND)
-                        flag=1
-                        error=1
+  return formula
 
-          # Everything else
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(message)s')
+
+
+def generate_error_dictionary(element_list, counts_range, special_cases=None):
+    """
+    Generates an error dictionary mapping mass differences to element or group descriptions.
+    For atoms, includes entries for counts from counts_range.
+    For groups, includes entries only for count=1, with descriptions like "1 OH-group".
+
+    Parameters:
+    - element_list (list): List of element symbols or groups (e.g., ['H', 'O', 'N', 'OH']).
+    - counts_range (range): Range of atom counts for atoms (e.g., range(1, 11) for counts 1-10).
+    - special_cases (dict): Optional dictionary for special error cases
+                            (e.g., {'0.0005': 'Electron mass error'}).
+
+    Returns:
+    - dict: Error dictionary with mass differences as keys and descriptions as values.
+    """
+
+    error_dict = {}
+    electron_mass = 0.0005486  # Atomic mass units (amu)
+
+    for element in element_list:
+        try:
+            atomic_mass = Formula(element).monoisotopic_mass
+        except Exception as e:
+            print(f"Error processing element {element}: {e}")
+            continue  # Skip this element if there's an error
+
+        # Determine if the element is a group (more than one capital letter)
+        is_group = sum(1 for c in element if c.isupper()) > 1
+
+        if is_group:
+            # For groups, create entry only for count=1
+            count = 1
+            mass_diff_e = atomic_mass * count
+            mass_diff_e_rounded = round(mass_diff_e, 4)
+            description = f"{count} {element}-group"  # Use the group name with '1' and 'group' with hyphen
+            if mass_diff_e_rounded in error_dict:
+                if description not in error_dict[mass_diff_e_rounded]:
+                    error_dict[mass_diff_e_rounded] += f", {description}"
             else:
-                if mass_error2 > 10.0 or mass_error1 > 10.0:
-                    pdf.set_text_color(255, 0, 0)  # Red color
-                    a = f"Calculated for {element1} {formatted_calculated_mass} ({formatted_calculated_mass_from_formula}) found {formatted_reported_mass} Mass Error: {mass_error1} ppm ({mass_error2} ppm)"
-                    add_sentence(pdf, a)
-                    pdf.set_text_color(0, 0, 0)  # Black color
-                    print(
-                        f"Calculated for {element1} {formatted_calculated_mass} "
-                        f"({formatted_calculated_mass_from_formula}) found {formatted_reported_mass} "
-                        f"\033[91mMass Error:  {mass_error1} ppm ({mass_error2} ppm)\033[0m"
-                    )
-                    error=1
+                error_dict[mass_diff_e_rounded] = description
+
+            # Positively Charged Ion (E+)
+            mass_diff_e_plus = mass_diff_e + (electron_mass * count)
+            mass_diff_e_plus_rounded = round(mass_diff_e_plus, 4)
+            if mass_diff_e_plus_rounded in error_dict:
+                if description not in error_dict[mass_diff_e_plus_rounded]:
+                    error_dict[mass_diff_e_plus_rounded] += f", {description}"
+            else:
+                error_dict[mass_diff_e_plus_rounded] = description
+
+            # Negatively Charged Ion (E-)
+            mass_diff_e_minus = mass_diff_e - (electron_mass * count)
+            mass_diff_e_minus_rounded = round(mass_diff_e_minus, 4)
+            if mass_diff_e_minus_rounded in error_dict:
+                if description not in error_dict[mass_diff_e_minus_rounded]:
+                    error_dict[mass_diff_e_minus_rounded] += f", {description}"
+            else:
+                error_dict[mass_diff_e_minus_rounded] = description
+        else:
+            # For atoms, create entries for counts in counts_range
+            for count in counts_range:
+                mass_diff_e = atomic_mass * count
+                mass_diff_e_rounded = round(mass_diff_e, 4)
+                if count == 1:
+                    description = f"{count} {element}-atom"
                 else:
-                    a = f"Calculated for {element1} {formatted_calculated_mass} ({formatted_calculated_mass_from_formula}) found {formatted_reported_mass} Mass Error: {mass_error1} ppm ({mass_error2} ppm)"
-                    add_sentence(pdf, a)
-                    print(
-                        f"Calculated for {element1} {formatted_calculated_mass} "
-                        f"({formatted_calculated_mass_from_formula}) found {formatted_reported_mass} "
-                        f"Mass Error: {mass_error1} ppm ({mass_error2} ppm)"
-                    )
-                    flag=1
+                    description = f"{count} {element}-atoms"
 
-            if formatted_calculated_mass == fun4:
-                print(CCYAN + 'It appears that the high resolution mass was generated by calculating the exact mass for')
-                print(f'for the neutral molecule {fun1} ({fun2b}) and adding 1H and +1.0000 => {mol_formula_neutral} ({fun4})'+CEND)
-                a='It appears that the high resolution mass was generated by calculating the exact mass for'
-                b=f'for the neutral molecule {fun1} ({fun2b}) and adding 1H and +1.0000 => {mol_formula_neutral} ({fun4})'
-                pdf.set_text_color(255, 165, 0)  # Orange color
-                add_sentence(pdf, a)
-                add_sentence(pdf, b)
-                pdf.set_text_color(0, 0, 0)  # Orange color
+                if mass_diff_e_rounded in error_dict:
+                    if description not in error_dict[mass_diff_e_rounded]:
+                        error_dict[mass_diff_e_rounded] += f", {description}"
+                else:
+                    error_dict[mass_diff_e_rounded] = description
 
-            if formatted_calculated_mass == fun6:
-                a='It appears that the high resolution mass was generated by calculating the exact mass for'
-                b=f'for the neutral molecule {mol_formula_neutral} ({formatted_calculated_mass_from_formula_neutral}) and adding +1.0000 => ({fun6})'
-                print(CCYAN + 'It appears that the high resolution mass was generated by calculating the exact mass for')
-                print( f'for the neutral molecule {mol_formula_neutral} ({formatted_calculated_mass_from_formula_neutral}) and adding +1.0000 => ({fun6})')
-                new_formula=increase_element_count(element1,'H')
-                new_mass=Formula(new_formula).monoisotopic_mass
-                formatted_new_mass=f"{new_mass:.4f}"
-                fm6 = float(formatted_new_mass)
-                mass_error6 = abs(round((fm6 / fm2 - 1) * 10 ** 6, 1))
-                print(f'The molecular formula for [M+H]+ is {new_formula}, the correct mass is: {formatted_new_mass} Mass error: {mass_error6} ppm'+CEND)
-                c=f'The molecular formula for [M+H]+ is {new_formula}, the correct mass is: {formatted_new_mass} Mass error: {mass_error6} ppm'
-                pdf.set_text_color(255, 165, 0)  # Orange color
-                add_sentence(pdf, a)
-                add_sentence(pdf, b)
-                add_sentence(pdf, c)
-                pdf.set_text_color(0, 0, 0)
+                # Positively Charged Ion (E+)
+                mass_diff_e_plus = mass_diff_e + (electron_mass * count)
+                mass_diff_e_plus_rounded = round(mass_diff_e_plus, 4)
+                if mass_diff_e_plus_rounded in error_dict:
+                    if description not in error_dict[mass_diff_e_plus_rounded]:
+                        error_dict[mass_diff_e_plus_rounded] += f", {description}"
+                else:
+                    error_dict[mass_diff_e_plus_rounded] = description
 
-            if formatted_calculated_mass == fun_mw_rounded:
-                a=f'ALERT! The molecular weight ({fun_mw_rounded}) was calculated, not the exact mass ({formatted_calculated_mass_from_formula})'
-                print(CCYAN + f'ALERT! The molecular weight ({fun_mw_rounded}) was calculated, not the exact mass ({formatted_calculated_mass_from_formula})' + CEND)
-                pdf.set_text_color(255, 165, 0)  # Orange color
-                add_sentence(pdf, a)
-                pdf.set_text_color(0, 0, 0)
-            if formatted_calculated_mass == fun_mw2_rounded:
-                a=f'ALERT! Calculated mass was calculating MW for {fun1} and adding 1.0000 ({fun_mw2_rounded}) [M+H]'
-                print(CCYAN + f'ALERT! Calculated mass was calculating MW for {fun1} and adding 1.0000 ({fun_mw2_rounded}) [M+H]' + CEND)
-                pdf.set_text_color(255, 165, 0)  # Orange color
-                add_sentence(pdf, a)
-                pdf.set_text_color(0, 0, 0)
-            if formatted_calculated_mass == fun_mw3_rounded:
-                a=f'ALERT! Calculated mass was calculating MW for {mol_formula_neutral} and adding 1.0000 ({fun_mw3_rounded}) [M+H]'
-                print(CCYAN + f'ALERT! Calculated mass was calculating MW for {mol_formula_neutral} and adding 1.0000 ({fun_mw3_rounded}) [M+H]' + CEND)
-                pdf.set_text_color(255, 165, 0)  # Orange color
-                add_sentence(pdf, a)
-                pdf.set_text_color(0, 0, 0)
+                # Negatively Charged Ion (E-)
+                mass_diff_e_minus = mass_diff_e - (electron_mass * count)
+                mass_diff_e_minus_rounded = round(mass_diff_e_minus, 4)
+                if mass_diff_e_minus_rounded in error_dict:
+                    if description not in error_dict[mass_diff_e_minus_rounded]:
+                        error_dict[mass_diff_e_minus_rounded] += f", {description}"
+                else:
+                    error_dict[mass_diff_e_minus_rounded] = description
 
-            if formatted_calculated_mass == fun_mw4_rounded:
-                a="Alert! The molecular weight + 23.0000 has been used instead of the exact mass"
-                print(CCYAN + f'Alert! The molecular weight + 23.0000 has been used instead of the exact mass'+ CEND)
-                pdf.set_text_color(255, 165, 0)  # Orange color
-                add_sentence(pdf, a)
-                pdf.set_text_color(0, 0, 0)
+    # Add Special Cases if Provided
+    if special_cases:
+        for mass, desc in special_cases.items():
+            mass_float = float(mass)
+            mass_rounded = round(mass_float, 4)
+            if mass_rounded in error_dict:
+                if desc not in error_dict[mass_rounded]:
+                    error_dict[mass_rounded] += f", {desc}"
+            else:
+                error_dict[mass_rounded] = desc
+
+    return error_dict
 
 
-            if formatted_calculated_mass == fun_mw5_rounded:
-                a="Alert! The molecular weight + 23.0000 has been used instead of the exact mass"
-                print(CCYAN + f'Alert! The molecular weight + 23.0000 has been used instead of the exact mass'+ CEND)
-                pdf.set_text_color(255, 165, 0)  # Orange color
-                add_sentence(pdf, a)
-                pdf.set_text_color(0, 0, 0)
+# Define special cases like electron mass error
+special_errors = {
+    '0.0005': "Electron mass error",
+    '0.0006': "Electron mass error",
+    '0.0073': "Nominal mass error (H=1.0000)?",
+    '0.0072': "Nominal mass error (H=1.0000)?",
+    '0.0071': "Nominal mass error (H=1.0000)?",
+    '0.0070': "Nominal mass error (H=1.0000)?",
+    '1.0005': "Nominal mass error (H=1.0000)?",
+    '1.0006': "Nominal mass error (H=1.0000)?",
+    '0.0102': "Nominal mass error (Na=23.0000)?",
+    '0.0103': "Nominal mass error (Na=23.0000)?",
+    '0.0107': "Nominal mass error (Na=23.0000)?",
+    '0.0108': "Nominal mass error (Na=23.0000)?",
+    '1.0077': '1 H-atom',
+    '1.0076': '1 H-atom',
+    '1.0075': '1 H-atom',
+    '1.0083': '1 H-atom',
+    '+22.9897': '1 Na-atom',
+    '21.9892':"Nominal mass error [M]+1.0000 (not [M+Na]+)",
+    '21.9893':"Nominal mass error [M]+1.0000 (not [M+Na]+)",
+    '0.9964': 'Specify measured B-isotope(s)',
+    '0.9963': 'Specify measured B-isotope(s)',
+    '1.9927': 'Specify measured B-isotopes',
+    '1.9928': 'Specify measured B-isotopes',
+    '1.9979': 'Specify measured Br-isotope(s)',
+    '1.9980': 'Specify measured Br-isotope(s)',
+    '+17.9906':"Exchange 1 H- with 1 F-atom",
+    '-17.9906':"Exchange 1 F- with 1 H-atom",
+    '+14.9871':"Exchange 1 H- with 1 O-atom",
+    '-14.9871':"Exchange 1 O- with 1 H-atom",
+    '+77.9105':"Exchange 1 H- with 1 Br-atom",
+    '-77.9105':"Exchange 1 Br- with 1 H-atom",
+    '1.0039': 'Mass calcd for [M+1] (1x 13C)',
+    '1.0038': 'Mass calcd for [M+1] (1x 13C)',
+    '1.0034': 'Mass calcd for [M+1] (1x 13C)',
+    '1.0033': 'Mass calcd for [M+1] (1x 13C)',
+    '1.0032': 'Mass calcd for [M+1] (1x 13C)',
+    '2.0064': 'Mass calcd for [M+2] (2x 13C)',
 
-            if differ_in_single_digit_except_last_two(fm1,fm3):
-                print(CCYAN + 'The calculated mass might contain a typo' + CEND)
-                pdf.set_text_color(255, 165, 0)  # Orange color
-                add_sentence(pdf, 'The calculated mass might contain a typo')
-                pdf.set_text_color(0, 0, 0)  # Black color
+}
 
-            if have_swapped_adjacent_digits(fm1,fm3):
-                print(CCYAN + 'The calculated and the recalculated mass appear to be transposed by two digits.' + CEND)
-                pdf.set_text_color(255, 165, 0)  # Orange color
-                add_sentence(pdf, 'The calculated and the recalculated mass appear to be transposed by two digits.')
-                pdf.set_text_color(0, 0, 0)  # Black color
+# Generate the error dictionary
+elements = [
+    'H',  'He', 'Li', 'Be', 'B',  'C',  'N',  'O',  'F',  'Ne',
+    'Na', 'Mg', 'Al', 'Si', 'P',  'S',  'Cl', 'Ar', 'K',  'Ca',
+    'Sc', 'Ti', 'V',  'Cr', 'Mn', 'Fe', 'Co', 'Ni', 'Cu', 'Zn',
+    'Ga', 'Ge', 'As', 'Se', 'Br', 'Kr', 'Rb', 'Sr', 'Y',  'Zr',
+    'Nb', 'Mo', 'Tc', 'Ru', 'Rh', 'Pd', 'Ag', 'Cd', 'In', 'Sn',
+    'Sb', 'Te', 'I',  'Xe', 'Cs', 'Ba', 'La', 'Ce', 'Pr', 'Nd',
+    'Pm', 'Sm', 'Eu', 'Gd', 'Tb', 'Dy', 'Ho', 'Er', 'Tm', 'Yb',
+    'Lu', 'Hf', 'Ta', 'W',  'Re', 'Os', 'Ir', 'Pt', 'Au', 'Hg',
+    'Tl', 'Pb', 'Bi','D','CH','CH2','CH3','CH4','NH','NH2','NH3','NH4',
+    'OH','H2O','H3O','NO','NO2','OCH3','CF3','C2H5','HF','HCl','HBr','HS','HI'
 
-            if have_swapped_adjacent_digits(fm1,fm2):
-                print(CCYAN + 'The calculated mass and the measured mass appear to be transposed by two digits.' + CEND)
-                pdf.set_text_color(255, 165, 0)  # Orange color
-                add_sentence(pdf, 'The calculated f and the measured mass appear to be transposed by two digits.')
-                pdf.set_text_color(0, 0, 0)  # Black color
-            elif int(fm2) != int(fm1) and mass_error1 > 10.0:
-                pdf.set_text_color(255, 165, 0)  # Orange color
-                add_sentence(pdf, 'The reported calculated and measured HR masses differ in their integers.')
-                pdf.set_text_color(0, 0, 0)  # Orange color
-                print(CCYAN + 'The reported calculated and measured HR masses differ in their integers.' + CEND)
+]
 
-            # Check whether one or more of the following atoms is missing in the reported molecular formula
-            elements_to_test = ['C', 'H', 'O']  # Add more elements as needed
-            for i in range(10):
-                for element_to_test in elements_to_test:
-                    new_formula = element1
-                    for j in range(i+1):
-                        if is_element_in_formula(new_formula, element_to_test):
-                            new_formula = increase_element_count(new_formula, element_to_test)
-                        else:
-                            new_formula = new_formula.replace("]+", f"{element_to_test}]+")
-                    check_formula('Adding','-atoms(s)')
+atom_counts = range(1, 11)  # 1 to 10
+error_dictionary = generate_error_dictionary(elements, atom_counts, special_errors)
 
-            # Check whether one or more of the following atoms is missing in the reported molecular formula
-            elements_to_test = [ 'D','S', 'Na', 'N',  'P', 'Si', 'Se', 'Li', 'B','Br','F','Cl','K','I','Ag','Ru']  # Add more elements as needed
-            for i in range(4):
-                for element_to_test in elements_to_test:
-                    new_formula = element1
-                    for j in range(i+1):
-                        if is_element_in_formula(new_formula, element_to_test):
-                            new_formula = increase_element_count(new_formula, element_to_test)
-                        else:
-                            new_formula = new_formula.replace("]+", f"{element_to_test}]+")
-                    check_formula('Adding','-atoms(s)')
+def categorize_error(error_value, known_errors, tolerance=0.0001):
+    """
+    Categorizes the error based on a given error value and a dictionary of known atomic masses.
+    Generates a message indicating whether atoms should be added or removed.
 
-            #flag = 0
-            if flag==0:
-                elements_to_test = ['C', 'H',  'O']  # Add more elements as needed
-                for i in range(10):
-                    for element_to_test in elements_to_test:
-                        new_formula = element1
-                        for j in range(i + 1):
-                            new_formula = decrease_element_count(new_formula, element_to_test)
-                            if flag==0:
-                                check_formula('Removing','-atoms(s)')
+    Parameters:
+    error_value (float): The calculated error between the calculated and recalculated mass.
+    known_errors (dict): A dictionary where keys are atomic masses and values are the element descriptions.
+    tolerance (float): The tolerance range within which the error value should match a known difference.
 
-            if flag==0:
-                elements_to_test = ['D', 'S', 'Na', 'N',  'P', 'Si', 'Se', 'Li', 'B', 'Br', 'F', 'Cl', 'K',
-                                    'I', 'Ag','Ru']  # Add more elements as needed
-                for i in range(4):
-                    for element_to_test in elements_to_test:
-                        new_formula = element1
-                        for j in range(i + 1):
-                            new_formula = decrease_element_count(new_formula, element_to_test)
-                            if flag==0:
-                                check_formula('Removing','-atoms(s)')
+    Returns:
+    str: The dynamically generated error message if a match is found, otherwise returns a blank space for zero difference.
+    """
+    # Check if the error value is effectively zero within the tolerance range
+    if abs(error_value) <= tolerance:
+        return ""  # Return a blank space if the difference is zero
 
-            elements_to_test = ['S', 'Na', 'N', 'O', 'P', 'Si', 'Se', 'Li', 'K', 'B', 'Br', 'F',
-                                'Cl', 'D']  # Add more elements as needed
-            if flag == 0:
-                elements_to_replace = ["[18]", "[35]", "[10]", "[37]", "[79]", "[81]", "[11]", "[28]", "[23]", "[80]",
-                                       "[]"]
-                for element_to_test in elements_to_test:
-                    new_formula = delete_element_from_formula(element1, element_to_test)
-                    for elem in elements_to_replace:
-                        new_formula = new_formula.replace(elem, "")
-                    i=0
-                    check_formula('Removing','-atoms(s)')
+    # Special case handling for known mass differences
+    for atomic_mass, atom_description in known_errors.items():
+        # Check if the error matches the dictionary value or the dictionary value plus 0.0001
+        if (abs(abs(error_value) - atomic_mass) <= tolerance or
+                abs(abs(error_value) - (atomic_mass + 0.0001)) <= tolerance):
 
-            new_formula = element1
-            i=0
-            if flag == 0:
-                new_formula = increase_element_count(new_formula, 'C')
-                new_formula = increase_element_count(new_formula, 'H')
-                element_to_test = 'CH'
-                check_formula('Adding a ', 'group')
-                new_formula = increase_element_count(new_formula, 'H')
-                element_to_test = 'CH2'
-                if flag == 0:
-                    check_formula('Adding', '-group')
-                new_formula = increase_element_count(new_formula, 'H')
-                element_to_test = 'CH3'
-                if flag == 0:
-                    check_formula('Adding', '-group')
-                new_formula = increase_element_count(new_formula, 'H')
-                element_to_test = 'CH4'
-                if flag == 0:
-                    check_formula('Adding', '-group')
+            if len(atom_description) > 13:  # Check if the database entry is longer than six characters
+                return atom_description  # Return the database entry directly
 
-            new_formula = element1
-            i=0
-            if flag == 0:
-                new_formula = increase_element_count(new_formula, 'O')
-                new_formula = increase_element_count(new_formula, 'H')
-                element_to_test = 'OH'
-                check_formula('Adding', '-group')
-                new_formula = increase_element_count(new_formula, 'H')
-                element_to_test = 'H2O'
-                if flag == 0:
-                    check_formula('Adding', '-group')
-                new_formula = increase_element_count(new_formula, 'H')
-                element_to_test = 'H3O+'
-                if flag == 0:
-                    check_formula('Adding', '-group')
+            # Extract the count and element from the dictionary entry
+            parts = atom_description.split()
+            if len(parts) != 2:
+                # Handle unexpected format
+                return atom_description
 
-            new_formula = element1
-            i=0
-            if flag == 0:
-                new_formula = increase_element_count(new_formula, 'N')
-                new_formula = increase_element_count(new_formula, 'H')
-                element_to_test = 'NH'
-                check_formula('Adding', '-group')
-                new_formula = increase_element_count(new_formula, 'H')
-                element_to_test = 'NH2'
-                if flag == 0:
-                    check_formula('Adding', '-group')
-                new_formula = increase_element_count(new_formula, 'H')
-                element_to_test = 'NH3'
-                if flag == 0:
-                    check_formula('Adding', '-group')
-                new_formula = increase_element_count(new_formula, 'H')
-                element_to_test = 'NH4+'
-                if flag == 0:
-                    check_formula('Adding', '-group')
+            count_str, element = parts
+            try:
+                count = int(count_str)
+            except ValueError:
+                # Handle cases where count is not an integer
+                return atom_description
 
-            new_formula = element1
-            i=0
-            if flag == 0:
-                new_formula = decrease_element_count(new_formula, 'C')
-                new_formula = decrease_element_count(new_formula, 'H')
-                element_to_test = 'CH'
-                check_formula('Removing a ', 'group')
-                new_formula = decrease_element_count(new_formula, 'H')
-                element_to_test = 'CH2'
-                if flag == 0:
-                    check_formula('Removing', '-group')
-                new_formula = decrease_element_count(new_formula, 'H')
-                element_to_test = 'CH3'
-                if flag == 0:
-                    check_formula('Removing', '-group')
-                new_formula = decrease_element_count(new_formula, 'H')
-                element_to_test = 'CH4'
-                if flag == 0:
-                    check_formula('Removing', '-group')
+            # Generate the correct message based on the sign of the error
+            if error_value > 0:
+                return f"Add {count} {element} to formula"
+            else:
+                return f"Remove {count} {element} from formula"
 
-            new_formula = element1
-            i = 0
-            if flag == 0:
-                if is_element_in_formula(new_formula, 'O'):
-                    new_formula = decrease_element_count(new_formula, 'O')
-                    if new_formula==element1:
-                        delete_element_from_formula(new_formula, 'O')
-                    new_formula = decrease_element_count(new_formula, 'H')
-                    element_to_test = 'OH'
-                    check_formula('Removing', '-group')
-                    if flag == 0:
-                        new_formula = decrease_element_count(new_formula, 'H')
-                        element_to_test = 'H2O'
-                        check_formula('Removing', '-group')
-                    if flag == 0:
-                        new_formula = decrease_element_count(new_formula, 'H')
-                        element_to_test = 'H3O'
-                        check_formula('Removing', '-group')
+    # If no match found, return the error value as a string with the correct sign
+    return f"{error_value:+.4f}"
 
-            new_formula = element1
-            i = 0
-            if flag == 0:
-                if is_element_in_formula(new_formula, 'N'):
-                    new_formula = decrease_element_count(new_formula, 'N')
-                    if new_formula == element1:
-                        delete_element_from_formula(new_formula, 'N')
-                    new_formula = decrease_element_count(new_formula, 'H')
-                    element_to_test = 'NH'
-                    check_formula('Removing', '-group')
-                    if flag == 0:
-                        new_formula = decrease_element_count(new_formula, 'H')
-                        element_to_test = 'NH2'
-                        check_formula('Removing', '-group')
-                    if flag == 0:
-                        new_formula = decrease_element_count(new_formula, 'H')
-                        element_to_test = 'NH3'
-                        check_formula('Removing', '-group')
-                    if flag == 0:
-                        new_formula = decrease_element_count(new_formula, 'H')
-                        element_to_test = 'NH4'
-                        check_formula('Removing', '-group')
 
-            new_formula = element1
-            i = 0
-            if flag == 0:
-                if is_element_in_formula(new_formula, 'Na'):
-                    new_formula = decrease_element_count(new_formula, 'Na')
-                    if new_formula == element1:
-                        delete_element_from_formula(new_formula, 'Na')
-                    new_formula = increase_element_count(new_formula, 'H')
-                    element_to_test = 'Na'
-                    check_formula('Replacing', '+ by H+')
+def hrms_cleanup(result, error_dictionary):
+    """
+    Processes a list of HRMS data strings and extracts specified components,
+    ensuring that the ion notation is correctly captured and then removed from the line.
+    Before processing each line, it removes all strings within the line that are shorter than
+    5 characters and do not contain a capital 'M'.
+    Recalculates the monoisotopic mass using the molmass library and computes error.
 
-            new_formula = element1
-            i = 0
-            if flag == 0:
-                if is_element_in_formula(new_formula, 'H'):
-                    new_formula = decrease_element_count(new_formula, 'H')
-                    if new_formula == element1:
-                        delete_element_from_formula(new_formula, 'H')
-                    new_formula = new_formula.replace("]+","Na]+")
-                    element_to_test = 'H'
-                    check_formula('Replacing', '+ by Na+')
+    Parameters:
+    - result (list of str): The list containing HRMS data strings.
+    - error_dictionary (dict): The autogenerated error dictionary with mass differences and descriptions.
 
-            new_formula = element1
-            i = 0
-            if flag == 0:
-                if is_element_in_formula(new_formula, 'Na'):
-                    delete_element_from_formula(new_formula, 'Na')
-                    new_formula = new_formula.replace("]+","K]+")
-                    element_to_test = 'Na'
-                    check_formula('Replacing', '+ by K+')
+    Returns:
+    - list of list: A list where each sublist contains extracted data, including error calculations and descriptions.
+    """
 
-            i = 0
-            if flag == 0:
-                new_formula=element1
-                if is_element_in_formula(new_formula, 'Na'):
-                    new_formula=new_formula.replace('Na','')
-                    new_formula_neutral = new_formula.replace("+", "")
-                    x=Formula(new_formula_neutral).monoisotopic_mass
-                    y=x+1
-                    mass=f"{x:.4f}"
-                    formatted_modified_mass_neutral = f"{y:.4f}"
-                    if formatted_modified_mass_neutral == formatted_calculated_mass:
-                        print(
-                            CCYAN + 'It appears that the high resolution mass was generated by calculating the exact mass for')
-                        print(
-                            f'for the neutral molecule {new_formula_neutral} ({mass}) and adding +1.0000 => {formatted_calculated_mass}')
+    # Initialize the parsed_results list
+    parsed_results = []
 
-                        a='It appears that the high resolution mass was generated by calculating the exact mass for'
-                        b=f'for the neutral molecule {new_formula_neutral} ({mass}) and adding +1.0000 => {formatted_calculated_mass}'
-                        pdf.set_text_color(255, 165, 0)  # Orange color
-                        add_sentence(pdf, a)
-                        add_sentence(pdf, b)
-                        new_formula=increase_element_count(new_formula,'H')
-                        new_mass=Formula(new_formula).monoisotopic_mass
-                        z=f"{new_mass:.4f}"
-                        new_mass=float(z)
-                        mass_error7 = abs(round((new_mass / fm2 - 1) * 10 ** 6, 1))
-                        print(
-                            f'Thee molecular formula for [M+H]+ is {new_formula}, the correct mass is: {z} Mass error: {mass_error7} ppm' + CEND)
-                        c= f'The molecular formula for [M+H]+ is {new_formula}, the correct mass is: {z} Mass error: {mass_error7} ppm'
-                        add_sentence(pdf, c)
-                        pdf.set_text_color(0, 0, 0)  # Black color
+    # Updated ion_pattern to include optional digits before 'M'
+    ion_pattern = re.compile(r'\[\d*M[^]]*]\S*')
 
-            if flag == 0:
-                new_formula=element1
-                if is_element_in_formula(new_formula, 'Na'):
-                    new_formula=new_formula.replace('Na','')
-                    new_formula_neutral = new_formula.replace("+", "")
-                    x=Formula(new_formula_neutral).monoisotopic_mass
-                    y=x+23
-                    mass=f"{x:.4f}"
-                    formatted_modified_mass_neutral = f"{y:.4f}"
-                    if formatted_modified_mass_neutral == formatted_calculated_mass:
-                        print(
-                            CCYAN + 'It appears that the high resolution mass was generated by calculating the exact mass for')
-                        print(
-                            f'for the neutral molecule {new_formula_neutral} ({mass}) and adding +23.0000 => {formatted_calculated_mass}')
-                        print('The correct mass and mass error are shown above in parenthesis'+CEND)
-                        a='It appears that the high resolution mass was generated by calculating the exact mass for'
-                        b=f'for the neutral molecule {new_formula_neutral} ({mass}) and adding +23.0000 => {formatted_calculated_mass}'
-                        c='The correct mass and mass error are shown above in parenthesis'
-                        pdf.set_text_color(255, 165, 0)  # Orange color
-                        add_sentence(pdf, a)
-                        add_sentence(pdf, b)
-                        add_sentence(pdf, c)
-                        pdf.set_text_color(0, 0, 0)  # Black color
+    # New formula pattern: word starting with 'C', followed by digits, 'H', digits, and possibly other elements
+    #formula_pattern = re.compile(r'C\d+H\d+(?:[A-Z][a-z]?\d*|\[\d+[A-Z][a-z]*\d*)*[+-]?')
+    #formula_pattern = re.compile(r'C\d+H\d+(?:[A-Z][a-z]?\d*|\[\d+[A-Z][a-z]*\d*\])*[+-]?')
+    formula_pattern = re.compile(r'C\d+(?:H\d+|F\d+)(?:[A-Z][a-z]?\d*|\[\d+[A-Z][a-z]*\d*])*[+-]?')
 
-        if error == 0 and correct==1:
-            add_sentence(pdf,'Very nice, no mistakes!')
-            print('Very nice, no mistakes!')
-        add_sentence(pdf, "")
 
+    # Pattern for floats with exactly 4 digits after decimal point
+    float_pattern = re.compile(r'\d+\.\d{4}')
+
+    # Process each line in the result list
+    for line in result:
+        # Remove words shorter than 5 characters that do not contain a capital 'M'
+        words = line.split()
+        words_filtered = [word for word in words if len(word) >= 5 or ('M' in word)]
+        line = ' '.join(words_filtered)
+
+        # Initialize a row with 8 empty elements (added a column for Error)
+        row = [''] * 8
+
+        # Extract the ion notation and its charge
+        ion_match = ion_pattern.search(line)
+        ion_charge = ''
+        if ion_match:
+            ion = ion_match.group(0)
+            row[1] = ion.strip()
+            # Extract the charge from the ion notation if present (e.g., ]+, ]-, ]2+)
+            ion_charge_match = re.search(r'(\d*[+-])?$', ion)
+            if ion_charge_match:
+                ion_charge = ion_charge_match.group(1)
+            # Remove the ion notation from the line
+            line = line.replace(ion, '')
+        else:
+            row[1] = ''
+
+        # Now proceed to extract the formula, calcd mass, and found mass from the modified line
+
+        # Extract the formula
+        formula_match = formula_pattern.search(line)
+
+        if formula_match:
+            formula = formula_match.group(0).strip()
+            # If the formula ends with ion_charge, remove ion_charge from formula
+            if ion_charge and formula.endswith(ion_charge):
+                formula = formula[:-len(ion_charge)].strip()
+            # Check if there's a charge present in the formula
+            charge_match = re.search(r'([+-]\d*)$', formula)
+            if charge_match:
+                charge = charge_match.group(1)
+                formula_no_charge = formula.replace(charge, "")
+            else:
+                charge = ion_charge if ion_charge else '+'
+                formula_no_charge = formula
+
+            # Enclose the formula in square brackets before recalculating the mass
+
+            formula_in_brackets = f'[{formula_no_charge}]{charge}'
+            formula_in_brackets = formula_in_brackets.replace("H1HeXe", "[13C]")
+            formula_in_brackets = formula_in_brackets.replace("C1F", "CF")
+            formula_in_brackets = formula_in_brackets.replace("H1N", "HN")
+            row[0] = formula_in_brackets
+
+            # Recalculate the monoisotopic mass using molmass while keeping isotopic notation intact
+            try:
+                recalculated_mass = Formula(formula_in_brackets).monoisotopic_mass
+                if ion_charge:
+                    if ion_charge in ("+", "-"):
+                        charge_number = 1
+                    else:
+                        charge_number = int(ion_charge[:-1])  # Extract the numeric part of the charge
+                    recalculated_mass /= abs(charge_number)
+
+                row[4] = f'{recalculated_mass:.4f}'  # Store the monoisotopic mass with 4 decimal precision
+            except Exception as e:
+                row[4] = 'Error'  # Handle the case where the formula is invalid for molmass
+        else:
+            row[0] = ''
+            row[4] = ''
+
+        # Extract all floats with exactly 4 decimal places
+        floats_with_4_decimals = float_pattern.findall(line)
+
+        # Extract the calcd mass - first occurring float with 4 decimal places
+        if floats_with_4_decimals:
+            calcd_mass = floats_with_4_decimals[0]
+            row[2] = calcd_mass.strip()
+        else:
+            row[2] = ''
+
+        # Extract the found mass - second float with 4 decimal places, if it exists
+        if len(floats_with_4_decimals) >= 2:
+            found_mass = floats_with_4_decimals[1]
+            row[3] = found_mass.strip()
+        else:
+            row[3] = ''
+
+        # Calculate the error between the calculated mass and the recalculated mass
+        if row[2] and row[4] and row[2] != 'Error' and row[4] != 'Error':
+            try:
+                error = float(row[2]) - float(row[4])
+                # Categorize the error based on the error value
+                error_description = categorize_error(error, error_dictionary)
+                # Check for a typo error if no existing error description
+                if is_float(error_description) or error==0:
+
+                    if differ_in_single_digit_except_last_two(float(row[2]), float(row[3])):
+                        error_description = "Typo (Calcd,Found)"
+
+                    if differ_in_single_digit_except_last_two(float(row[2]), float(row[4])):
+                        error_description = "Typo (Calcd,Recalcd)"
+
+                    if have_swapped_adjacent_digits(float(row[2]), float(row[3])):
+                        error_description = "Transposed digits (Calcd,Found)"
+
+                    if have_swapped_adjacent_digits(float(row[2]), float(row[4])):
+                        error_description = "Transposed digits (Calcd,Recalcd)"
+
+                    if error_description in ("-0.0010", "-0.0011", "-0.0012") and ion_charge == "-":
+                        error_description = "Mass was calculated for cation"
+
+                    if error_description in ("-0.0010", "-0.0011", "-0.0012") and "M-" in row[1]:
+                        error_description = "Mass was calculated for cation"
+                    #print(error_description)
+
+                    mw_plus = round(calculate_molecular_weight(row[0]), 4)
+                    if float(row[2]) == mw_plus:
+                        error_description = "Molecular weight error"
+
+                    mw_plus_plus1 = round(mw_plus + 1, 4)
+                    if float(row[2]) == mw_plus_plus1:
+                        error_description = "Molecular weight error"
+
+                    mw_plus_plus23 = round(mw_plus + 23, 4)
+                    if float(row[2]) == mw_plus_plus23:
+                        error_description = "Molecular weight error"
+
+                    formula_neutral = row[0].replace("+", "")
+                    mw_neutral = round(calculate_molecular_weight(formula_neutral), 4)
+                    if mw_neutral == float(row[2]):
+                        error_description = "Molecular weight error (neutral)"
+
+                    mw_neutral_plus1 = round(mw_neutral + 1, 4)
+                    if mw_neutral_plus1 == float(row[2]):
+                        error_description = "Molecular weight error (neutral+1)"
+
+                    mw_neutral_plus23 = round(mw_neutral + 23, 4)
+                    if mw_neutral_plus23 == float(row[2]):
+                        error_description = "Molecular weight error (neutral+23)"
+
+                    if "Na" in row[0]:
+                        formula_minus_sodium = row[0].replace("Na", "")
+                        mw1 = round(calculate_molecular_weight(formula_minus_sodium), 4) + 23
+                        if mw1 == float(row[2]):
+                            error_description = "Molecular weight + 23.0000"
+                    else:
+                        formula_plus_sodium = row[0].replace("[", "").replace("]", "").replace("+", "").replace("-", "")
+                        formula_plus_sodium = formula_plus_sodium+"Na"
+                        mw_plus_sodium = round(calculate_molecular_weight(formula_plus_sodium), 4)
+                        if mw_plus_sodium == float(row[2]):
+                            error_description = "Molecular weight error (Formula+Na)"
+
+                    formula_minus_h = row[0].replace("[", "").replace("]", "").replace("+", "").replace("-", "")
+                    formula_minus_h = decrease_element_count(formula_minus_h, 'H')
+                    mw2 = round(calculate_molecular_weight(formula_minus_h), 4) + 1
+                    if mw2 == float(row[2]):
+                        error_description = "Molecular weight + 1.0000"
+
+                row[7] = error_description  # Replace the error value with the error description or keep the difference
+
+            except ValueError:
+                row[7] = 'Error'
+        else:
+            row[7] = 'Error'
+
+        if row[1] and row[2] and row[3] and not row[0]:
+            row[7] = 'No formula found'
+
+        # Skip the row if both row[0] and row[1] are empty
+        if not row[0] and not row[1]:
+            continue  # Do not append this row to parsed_results
+
+        # Append the row to the parsed_results list
+        parsed_results.append(row)
+
+    return parsed_results
+
+
+def calc_dev_calcd_and_recalcd(cleaned_results):
+    """
+    Calculates the absolute deviation between the calculated mass, recalculated mass, and the found mass in ppm,
+    and updates the 'Dev (Calcd)' and 'Dev (Recalcd)' columns in the cleaned_results list.
+
+    Parameters:
+    cleaned_results (list of list): The list containing extracted data.
+
+    Returns:
+    list of list: The updated cleaned_results list with 'Dev (Calcd)' and 'Dev (Recalcd)' columns filled.
+    """
+    for row in cleaned_results:
+        calcd_mass = row[2]
+        found_mass = row[3]
+        recalcd_mass = row[4]
+
+        # Initialize found_mass_float only if found_mass exists and is valid
+        found_mass_float = None
+        if found_mass:
+            try:
+                found_mass_float = float(found_mass)
+            except ValueError:
+                found_mass_float = None
+
+        # Calculate deviation for the calculated mass
+        if calcd_mass and found_mass_float is not None:
+            try:
+                calcd_mass_float = float(calcd_mass)
+                deviation_calcd = abs((found_mass_float - calcd_mass_float) / calcd_mass_float) * 1e6  # ppm
+                row[5] = f"{deviation_calcd:.1f}"  # Format to one decimal place
+            except ValueError:
+                row[5] = ''  # Leave the field empty if conversion fails
+        else:
+            row[5] = ''
+
+        # Calculate deviation for the recalculated mass
+        if recalcd_mass and found_mass_float is not None:
+            try:
+                recalcd_mass_float = float(recalcd_mass)
+                deviation_recalcd = abs((found_mass_float - recalcd_mass_float) / recalcd_mass_float) * 1e6  # ppm
+                row[6] = f"{deviation_recalcd:.1f}"  # Format to one decimal place
+            except ValueError:
+                row[6] = ''  # Leave the field empty if conversion fails
+        else:
+            row[6] = ''
+    return cleaned_results
+
+
+def print_aligned_table(cleaned_results, pdf_file_path):
+    """
+    Prints the cleaned_results in an aligned table format,
+    highlighting deviations greater than 10 ppm in red and error messages in purple.
+    Also exports the table to an Excel file named based on the pdf_file_path.
+    """
+    headers = ['Formula', 'Ion', 'Calcd Mass', 'Found Mass', 'Recalcd Mass', 'Dev (Calcd)', 'Dev (Recalcd)', 'Error']
+
+    # Calculate column widths for all columns, including the new 'Error' column
+    col_widths = [max(len(str(row[i])) for row in [headers] + cleaned_results) for i in range(8)]
+
+    # Print headers
+    header_row = '  '.join(f"{headers[i]:<{col_widths[i]}}" for i in range(8))
+    print(header_row)
+    print('-' * len(header_row))
+
+    # ANSI escape codes for colors
+    red = '\033[31m'
+    purple = '\033[35m'
+    reset = '\033[0m'
+
+    # Prepare data for the Excel file
+    excel_data = []
+
+    # Print each row
+    for row in cleaned_results:
+        # Collect data for Excel
+        excel_row = []
+
+        # Ensure that mass values are right-aligned and preserve trailing zeros
+        row_output = []
+        for i in range(8):  # Loop through all 8 columns
+            cell_content = row[i]
+            excel_row.append(cell_content)  # Add cell content to excel data
+
+            if i in [2, 3, 4]:  # Calcd Mass, Found Mass, and Recalcd Mass columns
+                # Format the mass values to preserve trailing zeros
+                formatted_cell = f"{cell_content:>{col_widths[i]}}"
+                row_output.append(formatted_cell)
+            elif i in [5, 6]:  # Dev (Calcd) and Dev (Recalcd) columns
+                # Check if deviation is greater than 10 ppm and highlight in red
+                try:
+                    deviation = float(cell_content)
+                    if deviation > 10:
+                        formatted_cell = f"{red}{cell_content:>{col_widths[i]}}{reset}"
+                    else:
+                        formatted_cell = f"{cell_content:>{col_widths[i]}}"
+                except (ValueError, TypeError):
+                    formatted_cell = f"{cell_content:>{col_widths[i]}}"
+                row_output.append(formatted_cell)
+            elif i == 7:  # Error column
+                # Highlight error messages in purple only if they are not numeric values
+                if isinstance(cell_content, str) and not re.match(r'^[+-]?\d*\.?\d+$', cell_content):
+                    formatted_cell = f"{purple}{cell_content:>{col_widths[i]}}{reset}"
+                else:
+                    formatted_cell = f"{cell_content:>{col_widths[i]}}"
+                row_output.append(formatted_cell)
+            else:
+                row_output.append(f"{str(cell_content):<{col_widths[i]}}")
+        print('  '.join(row_output))
+        excel_data.append(excel_row)
+
+    # Extract the base filename from pdf_file_path
+    base_filename = os.path.basename(pdf_file_path)
+    filename_without_ext = os.path.splitext(base_filename)[0]
+    # Construct the output filename
+    output_filename = f"output {filename_without_ext}.xlsx"
+    # Define the output path on the Desktop
+    desktop_path = destination_folder
+    excel_file_path = os.path.join(desktop_path, output_filename)
+
+    # Create a DataFrame and export to Excel
+    if write_report:
+        df = pd.DataFrame(excel_data, columns=headers)
+        df.to_excel(excel_file_path, index=False)
+        print(f"\nData has been exported to Excel file at: {excel_file_path}")
+
+def search_calcd_with_floats(text: str) -> List[str]:
+    """
+    Search for 'calcd' followed by two floats with four decimal places.
+    Extract from up to 25 characters before 'calcd' (if no float present) until the second float.
+    Only extract if total length is less than 100 characters.
+
+    Args:
+        text (str): Input text to search
+
+    Returns:
+        List[str]: List of matching strings
+    """
+    pattern_float = re.compile(r'\d+\.\d{4}')
+    results = []
+
+    # Find all occurrences of 'calcd', case-insensitive
+    for calcd_match in re.finditer('calcd', text, re.IGNORECASE):
+        calcd_start = calcd_match.start()
+
+        # Look at up to 25 characters before 'calcd'
+        pre_calcd_start = max(0, calcd_start - 25)
+        pre_calcd_text = text[pre_calcd_start:calcd_start]
+
+        # Check if there's a float in the pre-calcd text
+        pre_calcd_floats = list(pattern_float.finditer(pre_calcd_text))
+
+        # Determine the start position based on pre-calcd text
+        if not pre_calcd_floats:  # If no floats found before calcd
+            extraction_start = pre_calcd_start
+        else:
+            extraction_start = calcd_start
+
+        # Look ahead for floats after 'calcd'
+        post_calcd_text = text[calcd_start:calcd_start + 100]
+        post_floats = list(pattern_float.finditer(post_calcd_text))
+
+        if len(post_floats) >= 2:
+            # End at the second float
+            end_pos = calcd_start + post_floats[1].end()
+
+            # Only extract if total length is less than 100 characters
+            if end_pos - extraction_start < 100:
+                result = text[extraction_start:end_pos]
+                results.append(result)
+
+    return results
+
+
+def search_hrms_with_floats(text: str) -> List[str]:
+    """
+    Search for 'HRMS' followed by at least two floats with four decimal places.
+    If 'calcd' appears in the 25 characters after the second float, stop at the second float.
+    Otherwise, include up to 25 characters after the second float.
+
+    Args:
+        text (str): Input text to search
+
+    Returns:
+        List[str]: List of matching strings
+    """
+    pattern_float = re.compile(r'\d+\.\d{4}')
+    hrms_positions = [m.start() for m in re.finditer('HRMS', text)]
+    results = []
+
+    for hrms_pos in hrms_positions:
+        # Extract up to 100 characters from 'HRMS'
+        max_length_substring = text[hrms_pos:hrms_pos + 100]
+        floats = list(pattern_float.finditer(max_length_substring))
+
+        if len(floats) >= 2:
+            second_float_end = floats[1].end()
+
+            # Look at the next 25 characters after the second float
+            next_25_chars = max_length_substring[second_float_end:second_float_end + 25]
+
+            # If 'calcd' appears in next 25 chars, stop at second float
+            if 'calcd' in next_25_chars.lower():
+                end_pos = hrms_pos + second_float_end
+            else:
+                # If no 'calcd', include up to 25 characters after second float
+                end_pos = hrms_pos + second_float_end + 25
+
+            # Ensure end position doesn't exceed text length or 100 characters from 'HRMS'
+            end_pos = min(len(text), end_pos, hrms_pos + 100)
+            result = text[hrms_pos:end_pos].strip()
+            results.append(result)
+
+    return results
+
+def process_replacements(text: str) -> str:
+    """
+    Perform all necessary string replacements on the text.
+    """
+    replacements = {
+        r'LCMS':'HRMS',
+        r'HRESIMS':"HRMS",
+        r'HRESI': 'HRMS',
+        r'HR-MS': 'HRMS',
+        r'ESI-MS': ' HRMS',
+        r'‐': '-',
+        r'‒':r'-',
+        r'MHz':'',
+        r'MeOD':'',
+        r'Cal':"cal",
+        r'calculated': 'calcd ',
+        r'calcd.': 'calcd ',
+        r'calc. ': 'calcd ',
+        r'calc ': 'calcd ',
+        r'chemical':'',
+        r'formula':'',
+        r' ⊕': "+",
+        r'•': "",
+        r'＋': "+",
+        r'Observed':' ',
+        r'observed':' ',
+
+    }
+
+    for pattern, replacement in replacements.items():
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    text = ' '.join(text.split()).strip()
+    return text
+
+def list_pdfs_in_folder(directory_path: str) -> List[str]:
+    """
+    List all PDF file paths in the provided directory path.
+    """
+    try:
+        if not os.path.isdir(directory_path):
+            logging.error("The provided path is not a valid directory.")
+            return []
+        return [
+            os.path.join(directory_path, filename)
+            for filename in os.listdir(directory_path)
+            if filename.lower().endswith('.pdf')
+        ]
     except Exception as e:
-        # Handle the error, or simply print a message
-        print('')
-        print(pdf_file_path)
-        print('an error occurred:')
-        print(e)
-        continue  # Continue to the next iteration of the loop
+        logging.error(f"An error occurred while listing PDFs: {e}")
+        return []
 
-end_time = time.time()
-elapsed_time = end_time - start_time
-minutes, seconds = divmod(elapsed_time, 60)
-print(f"Elapsed time: {int(minutes)} minutes and {int(seconds)} seconds")
-pdf.output(output_file)
+def extract_text_from_pdf(file_path: str) -> str:
+    """
+    Extract text from a PDF file using PyMuPDF (fitz).
+    """
+    try:
+        with fitz.open(file_path) as pdf_document:
+            text_content = ""
+            for page_num in range(pdf_document.page_count):
+                page = pdf_document.load_page(page_num)
+                text_content += page.get_text()
+            return text_content
+    except Exception as e:
+        logging.error(f"Error extracting text from {file_path}: {e}")
+        return ""
+
+def main():
+    # Source folder
+    folder_path = source_folder
+    start_time = time.time()
+    hrms_total_measurements=0
+    pdf_filepaths = list_pdfs_in_folder(folder_path)
+    if not pdf_filepaths:
+        logging.info("No PDF files found to process.")
+        return
+
+    for pdf_file_path in pdf_filepaths:
+        text_content = extract_text_from_pdf(pdf_file_path)
+        #print(text_content)
+        if not text_content:
+            logging.warning(f"No text content extracted from {pdf_file_path}")
+            continue
+
+        text_content = re.sub(r'\s+', ' ', text_content).strip()  # Replace multiple spaces with a single space
+        text_content=process_replacements(text_content)
+        text_content=replace_comma_with_decimal(text_content)
+        text_content=adjust_space_around_decimal(text_content)
+        text_content=fix_floats(text_content)
+        text_content = remove_page_numbers(text_content)
+        text_content = re.sub(r'\[((C\d+(?:[A-Z][a-z]?\d*)*),\s*([M+][^]]+))',r'\1 [\3]', text_content)
+        text_content = re.sub(r'(C)(\d+)(h)(\d+)', lambda m: f'C{m.group(2)}H{m.group(4)}', text_content, flags=re.IGNORECASE)
+        text_content = re.sub(r'(c)(\d+)(H)(\d+)', lambda m: f'C{m.group(2)}H{m.group(4)}', text_content, flags=re.IGNORECASE)
+        text_content = re.sub(r'\b(C)(\d+)(HD)\b', r'C\2H1D', text_content)
+        text_content = re.sub(r'\b(C)\s*(\d*)\s*(H)\s*(\d*)\s*(N)\s*(\d*)\b',
+                      lambda
+                          m: f"{m.group(1)}{m.group(2) or ''}{m.group(3)}{m.group(4) or ''}{m.group(5)}{m.group(6) or ''}",
+                      text_content)
+
+        text_content = re.sub(r'\b(C)\s*(\d*)\s*(H)\s*(\d*)\s*(O)\s*(\d*)\b',
+                      lambda
+                          m: f"{m.group(1)}{m.group(2) or ''}{m.group(3)}{m.group(4) or ''}{m.group(5)}{m.group(6) or ''}",
+                      text_content)
+        text_content = text_content.replace("C2o","C20").replace("C1o","C10").replace("Cal","cal")
+        text_content = re.sub(r'B(\d+)H(\d+)', r'H\2B\1', text_content)
+        text_content = text_content.replace('\n', ' ').replace('+-', '+').replace(':'," ").replace('–','-').replace(','," ")
+        text_content = remove_spaces_within_brackets(text_content)
+        #Remove nested brackets from [(M+H]]+ etc
+        text_content = re.sub(r'\(\[([^]]{1,10})]\+\)', r'[\1]+', text_content)
+        text_content = re.sub(r'\[\[([^]]{1,10})]\+]', r'[\1]+', text_content)
+        text_content = text_content.replace(' [[', '[').replace(']]', ']')
+        replacements = {
+            "₁": "1", "₂": "2", "₃": "3", "₄": "4", "₅": "5",
+            "₆": "6", "₇": "7", "₈": "8", "₉": "9", "₀": "0", "¹": "1", "²": "2", "³": "3",
+            "⁴": "4", "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9", "⁰": "0","С":"C","Н":"H",
+            "C ": "C", " H ": "H", " F ":"F", " N ": "N", " Cl ":"Cl", " Br ":"Br", " O ": "O"," I ": "I",
+            " P ":"P"," B ":"B", " S ":"S"," NO ":"NO", " Na ": "Na", " SNa ": "SNa"," NNa ":"NNa",
+            " + ":"+ ",
+
+        }
+
+        for original, replacement in replacements.items():
+            text_content = text_content.replace(original, replacement)
+        text_content = remove_spaces_in_formula(text_content)
+        text_content = text_content.replace('#', '')
+        text_content = re.sub(r'(C\d+)', r' \1', text_content)
+        text_content = transform_expressions_in_text(text_content)
+        text_content=isotope_correct(text_content)
+        text_content=protect_floats(text_content)
+        text_content=text_content.replace("[13C]","H1HeXe")
+        text_content = text_content.replace("CF", "C1F")
+        text_content = text_content.replace("HN", "H1N")
+        results1 = search_hrms_with_floats(text_content)
+        modified_text = text_content
+        for match in results1:
+            modified_text = modified_text.replace(match, '')
+        # Clean up any double spaces created by the removals
+        modified_text = re.sub(r'\s+', ' ', modified_text).strip()
+        text_content=modified_text
+        results2 = search_calcd_with_floats(text_content)
+
+        results=results1+results2
+        cleaned_results = hrms_cleanup(results, error_dictionary)
+
+        cleaned_results = calc_dev_calcd_and_recalcd(cleaned_results)
+
+        cleaned_results = remove_sublists_with_missing_element1_positions_swapped(cleaned_results)
+
+        #cleaned_results = [list(item) for item in set(tuple(sublist) for sublist in cleaned_results)]
+        cleaned_results_new = []
+        for sublist in cleaned_results:
+            if sublist not in cleaned_results_new:
+                cleaned_results_new.append(sublist)
+        cleaned_results=cleaned_results_new
+
+        # a counter for the total number of measurements
+        num_row=len(cleaned_results)
+        hrms_total_measurements=hrms_total_measurements+num_row
+
+        if cleaned_results:
+            print(" ")
+            print(pdf_file_path)
+            print_aligned_table(cleaned_results, pdf_file_path)
+            if check_conditions(cleaned_results):
+                print("\nAwesome! No mistakes!")
+            #for result in results:
+                #print(result)
+
+        else:
+            print(" ")
+            print(f"No HRMS matches found in {pdf_file_path}")
+
+
+    elapsed_time = time.time() - start_time
+    minutes, seconds = divmod(elapsed_time, 60)
+
+
+    print(f"\nTotal number of measurements found: {hrms_total_measurements}")
+    print(f"Elapsed time: {int(minutes)} minutes and {int(seconds)} seconds")
+if __name__ == '__main__':
+    main()
